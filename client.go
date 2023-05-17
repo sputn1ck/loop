@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,10 +123,26 @@ type ClientConfig struct {
 
 // NewClient returns a new instance to initiate swaps with.
 func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
+
+	// Open the sqlite database.
+	sqliteStore, err := loopdb.NewSqliteStore(
+		&loopdb.SqliteConfig{
+			DatabaseFileName: filepath.Join(dbDir, "loop.sqlite"),
+		},
+		cfg.Lnd.ChainParams,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create the macaroon root key store.
+	rksStore := loopdb.NewRootKeyStore(sqliteStore.BaseDB)
+
 	store, err := loopdb.NewBoltSwapStore(dbDir, cfg.Lnd.ChainParams)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	lsatStore, err := lsat.NewFileStore(dbDir)
 	if err != nil {
 		return nil, nil, err
@@ -145,6 +162,7 @@ func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
 			return time.NewTimer(d).C
 		},
 		LoopOutMaxParts: cfg.LoopOutMaxParts,
+		RksStore:        rksStore,
 	}
 
 	sweeper := &sweep.Sweeper{
@@ -186,6 +204,7 @@ func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
 	cleanup := func() {
 		swapServerClient.stop()
 		store.Close()
+		sqliteStore.Close()
 	}
 
 	return client, cleanup, nil

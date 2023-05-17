@@ -389,26 +389,12 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		perms.RequiredPermissions[endpoint] = perm
 	}
 
-	rks, db, err := lndclient.NewBoltMacaroonStore(
-		d.cfg.DataDir, "macaroons.db", loopdb.DefaultLoopDBTimeout,
-	)
-	if err != nil {
-		return err
-	}
-
-	cleanupMacaroonStore := func() {
-		err := db.Close()
-		if err != nil {
-			log.Errorf("Error closing macaroon store: %v", err)
-		}
-	}
-
 	if withMacaroonService {
 		// Start the macaroon service and let it create its default
 		// macaroon in case it doesn't exist yet.
 		d.macaroonService, err = lndclient.NewMacaroonService(
 			&lndclient.MacaroonServiceConfig{
-				RootKeyStore:     rks,
+				RootKeyStore:     swapclient.RksStore,
 				MacaroonLocation: loopMacaroonLocation,
 				MacaroonPath:     d.cfg.MacaroonPath,
 				Checkers: []macaroons.Checker{
@@ -422,15 +408,14 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 			},
 		)
 		if err != nil {
-			cleanupMacaroonStore()
 			return err
 		}
+		log.Infof("Starting macaroon authentication service")
 
 		if err = d.macaroonService.Start(); err != nil {
 			// The client is the only thing we started yet, so if we
 			// clean up its connection now, nothing else needs to be
 			// shut down at this point.
-			cleanupMacaroonStore()
 			clientCleanup()
 			return err
 		}
@@ -453,7 +438,6 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 	swapsList, err := d.impl.FetchSwaps(d.mainCtx)
 	if err != nil {
 		if d.macaroonService == nil {
-			cleanupMacaroonStore()
 			clientCleanup()
 			return err
 		}
@@ -465,7 +449,6 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 			log.Errorf("Error shutting down macaroon service: %v",
 				err)
 		}
-		cleanupMacaroonStore()
 		clientCleanup()
 		return err
 	}
@@ -537,7 +520,6 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		// We need to shutdown before sending the error on the channel,
 		// otherwise a caller might exit the process too early.
 		d.stop()
-		cleanupMacaroonStore()
 		log.Info("Daemon exited")
 
 		// The caller expects exactly one message. So we send the error

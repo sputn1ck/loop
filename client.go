@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +19,7 @@ import (
 	"github.com/lightninglabs/loop/sweep"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"google.golang.org/grpc/status"
+	"gopkg.in/macaroon-bakery.v2/bakery"
 )
 
 var (
@@ -122,26 +122,8 @@ type ClientConfig struct {
 }
 
 // NewClient returns a new instance to initiate swaps with.
-func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
-
-	// Open the sqlite database.
-	sqliteStore, err := loopdb.NewSqliteStore(
-		&loopdb.SqliteConfig{
-			DatabaseFileName: filepath.Join(dbDir, "loop.sqlite"),
-		},
-		cfg.Lnd.ChainParams,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Create the macaroon root key store.
-	rksStore := loopdb.NewRootKeyStore(sqliteStore.BaseDB)
-
-	store, err := loopdb.NewBoltSwapStore(dbDir, cfg.Lnd.ChainParams)
-	if err != nil {
-		return nil, nil, err
-	}
+func NewClient(dbDir string, loopDB loopdb.SwapStore,
+	rksDB bakery.RootKeyStore, cfg *ClientConfig) (*Client, func(), error) {
 
 	lsatStore, err := lsat.NewFileStore(dbDir)
 	if err != nil {
@@ -156,13 +138,13 @@ func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
 	config := &clientConfig{
 		LndServices: cfg.Lnd,
 		Server:      swapServerClient,
-		Store:       store,
+		Store:       loopDB,
 		LsatStore:   lsatStore,
 		CreateExpiryTimer: func(d time.Duration) <-chan time.Time {
 			return time.NewTimer(d).C
 		},
 		LoopOutMaxParts: cfg.LoopOutMaxParts,
-		RksStore:        rksStore,
+		RksStore:        rksDB,
 	}
 
 	sweeper := &sweep.Sweeper{
@@ -171,7 +153,7 @@ func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
 
 	executor := newExecutor(&executorConfig{
 		lnd:                 cfg.Lnd,
-		store:               store,
+		store:               loopDB,
 		sweeper:             sweeper,
 		createExpiryTimer:   config.CreateExpiryTimer,
 		loopOutMaxParts:     cfg.LoopOutMaxParts,
@@ -203,8 +185,7 @@ func NewClient(dbDir string, cfg *ClientConfig) (*Client, func(), error) {
 
 	cleanup := func() {
 		swapServerClient.stop()
-		store.Close()
-		sqliteStore.Close()
+		loopDB.Close()
 	}
 
 	return client, cleanup, nil

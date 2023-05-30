@@ -92,7 +92,6 @@ func (s *BaseDB) CreateLoopOut(ctx context.Context, hash lntypes.Hash,
 
 	writeOpts := &SqliteTxOptions{}
 	return s.ExecTx(ctx, writeOpts, func(tx *sqlc.Queries) error {
-
 		insertArgs := loopToInsertArgs(hash, swap.SwapContract)
 
 		// First we'll insert the swap itself.
@@ -132,7 +131,6 @@ func (s *BaseDB) BatchCreateLoopOut(ctx context.Context, hashes []lntypes.Hash,
 		}
 
 		for i, swap := range swaps {
-
 			insertArgs := loopToInsertArgs(hashes[i], swap.SwapContract)
 
 			// First we'll insert the swap itself.
@@ -159,7 +157,6 @@ func (s *BaseDB) BatchCreateLoopOut(ctx context.Context, hashes []lntypes.Hash,
 				return err
 			}
 		}
-
 		return nil
 	})
 }
@@ -343,14 +340,13 @@ func (s *BaseDB) updateLoop(ctx context.Context, hash lntypes.Hash,
 
 	writeOpts := &SqliteTxOptions{}
 	return s.ExecTx(ctx, writeOpts, func(tx *sqlc.Queries) error {
-
 		updateParams := sqlc.InsertSwapUpdateParams{
 			SwapHash:        hash[:],
 			UpdateTimestamp: time.UTC(),
 			UpdateState:     int32(state.State),
-			ServerCost:      int32(state.Cost.Server),
-			OnchainCost:     int32(state.Cost.Onchain),
-			OffchainCost:    int32(state.Cost.Offchain),
+			ServerCost:      int64(state.Cost.Server),
+			OnchainCost:     int64(state.Cost.Onchain),
+			OffchainCost:    int64(state.Cost.Offchain),
 		}
 
 		if state.HtlcTxHash != nil {
@@ -382,9 +378,9 @@ func (s *BaseDB) BatchInsertUpdate(ctx context.Context, hashes []lntypes.Hash,
 				SwapHash:        hash[:],
 				UpdateTimestamp: times[i].UTC(),
 				UpdateState:     int32(states[i].State),
-				ServerCost:      int32(states[i].Cost.Server),
-				OnchainCost:     int32(states[i].Cost.Onchain),
-				OffchainCost:    int32(states[i].Cost.Offchain),
+				ServerCost:      int64(states[i].Cost.Server),
+				OnchainCost:     int64(states[i].Cost.Onchain),
+				OffchainCost:    int64(states[i].Cost.Offchain),
 			}
 
 			if states[i].HtlcTxHash != nil {
@@ -410,10 +406,10 @@ func loopToInsertArgs(hash lntypes.Hash,
 		SwapHash:         hash[:],
 		Preimage:         swap.Preimage[:],
 		InitiationTime:   swap.InitiationTime.UTC(),
-		AmountRequested:  int32(swap.AmountRequested),
-		CltvExpiry:       int32(swap.CltvExpiry),
-		MaxSwapFee:       int32(swap.MaxSwapFee),
-		MaxMinerFee:      int32(swap.MaxMinerFee),
+		AmountRequested:  int64(swap.AmountRequested),
+		CltvExpiry:       swap.CltvExpiry,
+		MaxSwapFee:       int64(swap.MaxSwapFee),
+		MaxMinerFee:      int64(swap.MaxMinerFee),
 		InitiationHeight: int32(swap.InitiationHeight),
 		ProtocolVersion:  int32(swap.ProtocolVersion),
 		Label:            swap.Label,
@@ -428,12 +424,12 @@ func loopOutToInsertArgs(hash lntypes.Hash,
 		SwapHash:            hash[:],
 		DestAddress:         loopOut.DestAddr.String(),
 		SwapInvoice:         loopOut.SwapInvoice,
-		MaxSwapRoutingFee:   int32(loopOut.MaxSwapRoutingFee),
-		SweepConfTarget:     int32(loopOut.SweepConfTarget),
+		MaxSwapRoutingFee:   int64(loopOut.MaxSwapRoutingFee),
+		SweepConfTarget:     loopOut.SweepConfTarget,
 		HtlcConfirmations:   int32(loopOut.HtlcConfirmations),
 		OutgoingChanSet:     loopOut.OutgoingChanSet.String(),
 		PrepayInvoice:       loopOut.PrepayInvoice,
-		MaxPrepayRoutingFee: int32(loopOut.MaxPrepayRoutingFee),
+		MaxPrepayRoutingFee: int64(loopOut.MaxPrepayRoutingFee),
 		PublicationDeadline: loopOut.SwapPublicationDeadline.UTC(),
 	}
 }
@@ -633,7 +629,6 @@ func getSwapEvents(updates []sqlc.SwapUpdate) ([]*LoopEvent, error) {
 	events := make([]*LoopEvent, len(updates))
 
 	for i := 0; i < len(events); i++ {
-
 		events[i] = &LoopEvent{
 			SwapStateData: SwapStateData{
 				State: SwapState(updates[i].UpdateState),
@@ -668,7 +663,7 @@ func convertOutgoingChanSet(outgoingChanSet string) (ChannelSet, error) {
 
 	// Iterate over the chanStrings slice and convert each string to ChannelID
 	for i, chanString := range chanStrings {
-		chanID, err := strconv.Atoi(chanString)
+		chanID, err := strconv.ParseInt(chanString, 10, 64)
 		if err != nil {
 			return nil, err
 		}

@@ -20,6 +20,10 @@ type SwapStore interface {
 	CreateLoopOut(ctx context.Context, hash lntypes.Hash,
 		swap *LoopOutContract) error
 
+	// BatchCreateLoopOut creates a batch of loop out swaps to the store.
+	BatchCreateLoopOut(ctx context.Context, hashes []lntypes.Hash,
+		swaps []*LoopOutContract) error
+
 	// UpdateLoopOut stores a new event for a target loop out swap. This
 	// appends to the event log for a particular swap as it goes through
 	// the various stages in its lifetime.
@@ -33,11 +37,18 @@ type SwapStore interface {
 	CreateLoopIn(ctx context.Context, hash lntypes.Hash,
 		swap *LoopInContract) error
 
+	// BatchCreateLoopIn creates a batch of loop in swaps to the store.
+	BatchCreateLoopIn(ctx context.Context, hashes []lntypes.Hash,
+		swaps []*LoopInContract) error
+
 	// UpdateLoopIn stores a new event for a target loop in swap. This
 	// appends to the event log for a particular swap as it goes through
 	// the various stages in its lifetime.
 	UpdateLoopIn(ctx context.Context, hash lntypes.Hash, time time.Time,
 		state SwapStateData) error
+
+	BatchInsertUpdate(ctx context.Context, hashes []lntypes.Hash,
+		times []time.Time, states []SwapStateData) error
 
 	// PutLiquidityParams writes the serialized `manager.Parameters` bytes
 	// into the bucket.

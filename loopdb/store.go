@@ -985,3 +985,19 @@ func (s *boltSwapStore) fetchLoopInSwap(rootBucket *bbolt.Bucket,
 
 	return &loop, nil
 }
+
+// BatchCreateLoopOut creates a batch of swaps to the store.
+func (b *boltSwapStore) BatchCreateLoopOut(ctx context.Context, hashes []lntypes.Hash,
+	swaps []*LoopOutContract) error {
+	return errors.New("not implemented")
+}
+
+func (b *boltSwapStore) BatchCreateLoopIn(ctx context.Context, hashes []lntypes.Hash,
+	swaps []*LoopInContract) error {
+	return errors.New("not implemented")
+}
+
+func (b *boltSwapStore) BatchInsertUpdate(ctx context.Context, hashes []lntypes.Hash,
+	times []time.Time, states []SwapStateData) error {
+	return errors.New("not implemented")
+}

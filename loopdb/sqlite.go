@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcwallet/snacl"
 	sqlite_migrate "github.com/golang-migrate/migrate/v4/database/sqlite"
+	"github.com/jackc/pgx/v4"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
 
 	"github.com/stretchr/testify/require"
@@ -44,7 +46,8 @@ type SqliteSwapStore struct {
 
 // NewSqliteStore attempts to open a new sqlite database based on the passed
 // config.
-func NewSqliteStore(cfg *SqliteConfig, network *chaincfg.Params) (*SqliteSwapStore, error) {
+func NewSqliteStore(cfg *SqliteConfig, network *chaincfg.Params,
+	opts ...BaseDBOptionsOptionFunc) (*SqliteSwapStore, error) {
 	// The set of pragma options are accepted using query options. For now
 	// we only want to ensure that foreign key constraints are properly
 	// enforced.
@@ -107,15 +110,9 @@ func NewSqliteStore(cfg *SqliteConfig, network *chaincfg.Params) (*SqliteSwapSto
 		}
 	}
 
-	queries := sqlc.New(db)
-
 	return &SqliteSwapStore{
-		cfg: cfg,
-		BaseDB: &BaseDB{
-			DB:      db,
-			Queries: queries,
-			network: network,
-		},
+		cfg:    cfg,
+		BaseDB: NewBaseDB(db, network, opts...),
 	}, nil
 }
 
@@ -131,12 +128,16 @@ func NewTestSqliteDB(t *testing.T) *SqliteSwapStore {
 	sqlDB, err := NewSqliteStore(&SqliteConfig{
 		DatabaseFileName: dbFileName,
 		SkipMigrations:   false,
-	}, &chaincfg.MainNetParams)
+	}, &chaincfg.MainNetParams, WithEncryptionMiddleware("loop"),
+	)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.DB.Close())
 	})
+
+	err = sqlDB.Init(context.Background())
+	require.NoError(t, err)
 
 	return sqlDB
 }
@@ -146,9 +147,111 @@ func NewTestSqliteDB(t *testing.T) *SqliteSwapStore {
 type BaseDB struct {
 	network *chaincfg.Params
 
+	options *BaseDBOptions
+
 	*sql.DB
 
 	*sqlc.Queries
+}
+
+func NewBaseDB(db *sql.DB, network *chaincfg.Params,
+	opts ...BaseDBOptionsOptionFunc) *BaseDB {
+
+	options := &BaseDBOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return &BaseDB{
+		DB:      db,
+		Queries: sqlc.New(db),
+		network: network,
+		options: options,
+	}
+}
+
+type BaseDBOptions struct {
+	// password is the password used to encrypt sensitive data stored in the
+	// database. The password alone is not enough to decrypt the data, the
+	// salt which is stored in the database on first run is also needed.
+	password []byte
+
+	// secret is used to encypt and decrypt sensitive data stored in the
+	// database. It is derived from the password and the stored salt.
+	secret *snacl.SecretKey
+}
+
+// PostgresStoreOptionFunc is a functional option that can be used to
+// configure the passed PostgresStoreOptions.
+type BaseDBOptionsOptionFunc func(*BaseDBOptions)
+
+// WithSecretKey is a PostgresStoreMiddlewareOption that can be used to set the
+// secret key used to encrypt sensitive data stored in the database.
+func WithEncryptionMiddleware(password string) BaseDBOptionsOptionFunc {
+	return func(m *BaseDBOptions) {
+		// Copy of the password.
+		m.password = []byte(password)
+	}
+}
+
+// Init initializes the necessary versioning state if the database hasn't
+// already been created in the past.
+func (p *BaseDB) Init(ctx context.Context) error {
+	return p.initSecretKey(ctx)
+}
+
+func (p *BaseDB) initSecretKey(ctx context.Context) error {
+	// Make sure that we don't store the password in memory for too long.
+	defer func() {
+		p.options.password = nil
+	}()
+
+	// Once migrations are done we're ready to initialize the secret key
+	// middleware.
+	return p.ExecTx(ctx, &SqliteTxOptions{}, func(tx *sqlc.Queries) error {
+		params, err := tx.GetSecretKeyParams(ctx)
+		if err == pgx.ErrNoRows || err == sql.ErrNoRows {
+			// If there's no secret key params stored in the db,
+			// then we first create a new secret key with our
+			// password and save the marshaled parameters.
+			secret, err := snacl.NewSecretKey(
+				&p.options.password,
+				snacl.DefaultN, snacl.DefaultR, snacl.DefaultP,
+			)
+			if err != nil {
+				return err
+			}
+
+			err = tx.InsertSecretKeyParams(ctx, secret.Marshal())
+			if err != nil {
+				return err
+			}
+
+			p.options.secret = secret
+
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		// If there's already a marshaled secret key parameter stored
+		// in the db, then we will unmarshal it and use it to create
+		// a new secret key instance.
+		var secret snacl.SecretKey
+		err = secret.Unmarshal(params)
+		if err != nil {
+			return err
+		}
+		err = secret.DeriveKey(&p.options.password)
+		if err != nil {
+			return err
+		}
+
+		p.options.secret = &secret
+
+		return nil
+	})
 }
 
 // BeginTx wraps the normal sql specific BeginTx method with the TxOptions
@@ -188,6 +291,28 @@ func (db *BaseDB) ExecTx(ctx context.Context, txOptions TxOptions,
 	}
 
 	return nil
+}
+
+// encrypt will encrypt the passed slice with the store's SecretKey.
+func (p *BaseDB) encrypt(data []byte) ([]byte, error) {
+	// Make sure that we have a secret key ready for encryption.
+	if p.options.secret == nil {
+		return nil, fmt.Errorf("invalid SecretKey")
+	}
+
+	return p.options.secret.Encrypt(data)
+}
+
+// decryptOrNil will decrypt the passed slice with the store's SecretKey.
+// Returns the decrypted slice unless the store's SecretKey is unset.
+func (p *BaseDB) decryptOrNil(data []byte) ([]byte, error) {
+	// If the secret key is not set, we'll simply return nil. This way we
+	// can make decryption optional.
+	if p.options.secret == nil {
+		return nil, nil
+	}
+
+	return p.options.secret.Decrypt(data)
 }
 
 // TxOptions represents a set of options one can use to control what type of

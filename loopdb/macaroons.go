@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"io"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"gopkg.in/macaroon-bakery.v2/bakery"
@@ -45,7 +46,12 @@ func (r *RootKeyStore) Get(ctx context.Context,
 		return nil, err
 	}
 
-	return mac.RootKey, nil
+	decryptedMac, err := r.db.decryptOrNil(mac.RootKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return decryptedMac, nil
 }
 
 // RootKey returns the root key to be used for making a new macaroon, and an id
@@ -58,45 +64,49 @@ func (r *RootKeyStore) RootKey(ctx context.Context) ([]byte, []byte, error) {
 		err         error
 	)
 
-	// Create pass in the set of options to create a read/write
-	// transaction, which is the default.
-	var writeTxOpts SqliteTxOptions
-	dbErr := r.db.ExecTx(ctx, &writeTxOpts, func(q *sqlc.Queries) error {
-		// Read the root key ID from the context. If no key is
-		// specified in the context, an error will be returned.
-		id, err = macaroons.RootKeyIDFromContext(ctx)
+	// Read the root key ID from the context. If no key is
+	// specified in the context, an error will be returned.
+	id, err = macaroons.RootKeyIDFromContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Check to see if there's a root key already stored for this
+	// ID.
+	mac, err := r.db.GetRootKey(ctx, id)
+	switch err {
+	case nil:
+		// If there is, decrypt it and return it.
+		decryptedMac, err := r.db.decryptOrNil(mac.RootKey)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
-
-		// Check to see if there's a root key already stored for this
-		// ID.
-		mac, err := r.db.GetRootKey(ctx, id)
-		switch err {
-		case nil:
-			rootKey = mac.RootKey
-			return nil
-
-		case sql.ErrNoRows:
-
-		default:
-			return err
-		}
-
+		return decryptedMac, id, nil
+	case sql.ErrNoRows:
+		fallthrough
+	case pgx.ErrNoRows:
 		// Otherwise, we'll create a new root key for this ID.
 		rootKey = make([]byte, macaroons.RootKeyLen)
 		if _, err := io.ReadFull(rand.Reader, rootKey); err != nil {
-			return err
+			return nil, nil, err
 		}
+	default:
+		return nil, nil, err
+	}
 
-		// Insert this new root key into the database.
-		return r.db.InsertRootKey(ctx, sqlc.InsertRootKeyParams{
-			ID:      id,
-			RootKey: rootKey,
-		})
+	// Encrypt the root key before storing it in the database.
+	encryptedRootKey, err := r.db.encrypt(rootKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Insert this new root key into the database.
+	err = r.db.InsertRootKey(ctx, sqlc.InsertRootKeyParams{
+		ID:      id,
+		RootKey: encryptedRootKey,
 	})
-	if dbErr != nil {
-		return nil, nil, dbErr
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return rootKey, id, nil

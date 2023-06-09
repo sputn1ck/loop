@@ -10,6 +10,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/jackc/pgx/v4"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -320,7 +321,7 @@ func (s *BaseDB) FetchLiquidityParams(ctx context.Context) ([]byte,
 
 	var params []byte
 	params, err := s.Queries.FetchLiquidityParams(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
+	if err == sql.ErrNoRows || err == pgx.ErrNoRows {
 		return params, nil
 	} else if err != nil {
 		return nil, err

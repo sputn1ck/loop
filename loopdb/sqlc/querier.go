@@ -15,11 +15,13 @@ type Querier interface {
 	GetLoopOutSwap(ctx context.Context, swapHash []byte) (GetLoopOutSwapRow, error)
 	GetLoopOutSwaps(ctx context.Context) ([]GetLoopOutSwapsRow, error)
 	GetRootKey(ctx context.Context, id []byte) (Macaroon, error)
+	GetSecretKeyParams(ctx context.Context) ([]byte, error)
 	GetSwapUpdates(ctx context.Context, swapHash []byte) ([]SwapUpdate, error)
 	InsertHtlcKeys(ctx context.Context, arg InsertHtlcKeysParams) error
 	InsertLoopIn(ctx context.Context, arg InsertLoopInParams) error
 	InsertLoopOut(ctx context.Context, arg InsertLoopOutParams) error
 	InsertRootKey(ctx context.Context, arg InsertRootKeyParams) error
+	InsertSecretKeyParams(ctx context.Context, params []byte) error
 	InsertSwap(ctx context.Context, arg InsertSwapParams) error
 	InsertSwapUpdate(ctx context.Context, arg InsertSwapUpdateParams) error
 	UpsertLiquidityParams(ctx context.Context, params []byte) error

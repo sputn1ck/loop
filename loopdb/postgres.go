@@ -1,6 +1,7 @@
 package loopdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -9,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	postgres_migrate "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/lightninglabs/loop/loopdb/sqlc"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +65,8 @@ type PostgresStore struct {
 
 // NewPostgresStore creates a new store that is backed by a Postgres database
 // backend.
-func NewPostgresStore(cfg *PostgresConfig, network *chaincfg.Params) (*PostgresStore, error) {
+func NewPostgresStore(cfg *PostgresConfig, network *chaincfg.Params,
+	opts ...BaseDBOptionsOptionFunc) (*PostgresStore, error) {
 	log.Infof("Using SQL database '%s'", cfg.DSN(true))
 
 	rawDb, err := sql.Open("pgx", cfg.DSN(false))
@@ -100,15 +101,9 @@ func NewPostgresStore(cfg *PostgresConfig, network *chaincfg.Params) (*PostgresS
 		}
 	}
 
-	queries := sqlc.New(rawDb)
-
 	return &PostgresStore{
-		cfg: cfg,
-		BaseDB: &BaseDB{
-			DB:      rawDb,
-			Queries: queries,
-			network: network,
-		},
+		cfg:    cfg,
+		BaseDB: NewBaseDB(rawDb, network, opts...),
 	}, nil
 }
 
@@ -122,12 +117,16 @@ func NewTestPostgresDB(t *testing.T) *PostgresStore {
 	sqlFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
 	store, err := NewPostgresStore(
 		sqlFixture.GetConfig(), &chaincfg.MainNetParams,
+		WithEncryptionMiddleware("loop"),
 	)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		sqlFixture.TearDown(t)
 	})
+
+	err = store.Init(context.Background())
+	require.NoError(t, err)
 
 	return store
 }

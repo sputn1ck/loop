@@ -48,6 +48,11 @@ type Macaroon struct {
 	RootKey []byte
 }
 
+type SecretKeyParam struct {
+	ID     int32
+	Params []byte
+}
+
 type Swap struct {
 	ID               int32
 	SwapHash         []byte

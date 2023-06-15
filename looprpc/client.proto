@@ -212,6 +212,12 @@ message LoopOutRequest {
     triggering the swap (loop CLI, autolooper, LiT UI, other 3rd party UI).
     */
     string initiator = 14;
+
+    /*
+    The extended public key of the wallet that should be used to receive the
+    swap payment. If not set, the default wallet will be used.
+    */
+    string xpub = 15;
 }
 
 message LoopInRequest {

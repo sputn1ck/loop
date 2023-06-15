@@ -68,4 +68,10 @@ type SwapStore interface {
 	Close() error
 }
 
+type XpubStore interface {
+	// GetNextExternalIndex returns the next external index to be used for
+	// the given xpub.
+	GetNextExternalIndex(ctx context.Context, xpub string) (uint32, error)
+}
+
 // TODO(roasbeef): back up method in interface?

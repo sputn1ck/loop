@@ -944,6 +944,10 @@
         "initiator": {
           "type": "string",
           "description": "An optional identification string that will be appended to the user agent\nstring sent to the server to give information about the usage of loop. This\ninitiator part is meant for user interfaces to add their name to give the\nfull picture of the binary used (loopd, LiT) and the method used for\ntriggering the swap (loop CLI, autolooper, LiT UI, other 3rd party UI)."
+        },
+        "xpub": {
+          "type": "string",
+          "description": "The extended public key of the wallet that should be used to receive the\nswap payment. If not set, the default wallet will be used."
         }
       }
     },

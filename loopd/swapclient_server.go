@@ -79,6 +79,7 @@ type swapClientServer struct {
 	nextSubscriberID int
 	swapsLock        sync.Mutex
 	mainCtx          context.Context
+	xPubService      *loop.XpubService
 }
 
 // LoopOut initiates an loop out swap with the given parameters. The call
@@ -91,10 +92,15 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 
 	log.Infof("Loop out request received")
 
+	if in.Xpub != "" && in.Dest != "" {
+		return nil, errors.New("xpub and dest are mutually exclusive")
+	}
+
 	var sweepAddr btcutil.Address
+	var err error
+
 	if in.Dest == "" {
 		// Generate sweep address if none specified.
-		var err error
 		sweepAddr, err = s.lnd.WalletKit.NextAddr(
 			context.Background(), "",
 			walletrpc.AddressType_WITNESS_PUBKEY_HASH, false,
@@ -102,8 +108,12 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		if err != nil {
 			return nil, fmt.Errorf("NextAddr error: %v", err)
 		}
-	} else {
-		var err error
+	} else if in.Xpub != "" {
+		sweepAddr, err = s.xPubService.GetNextAddressForXpub(ctx, in.Xpub)
+		if err != nil {
+			return nil, fmt.Errorf("xpub error: %v", err)
+		}
+	} else if in.Dest != "" {
 		sweepAddr, err = btcutil.DecodeAddress(
 			in.Dest, s.lnd.ChainParams,
 		)

@@ -65,6 +65,32 @@ type SwapStore interface {
 	// it's decoding using the proto package's `Unmarshal` method.
 	FetchLiquidityParams(ctx context.Context) ([]byte, error)
 
+	// FetchUnconfirmedSweepBatches fetches all the loop out sweep batches
+	// from the database that are not in a confirmed state.
+	FetchUnconfirmedSweepBatches(ctx context.Context) (
+		[]*Batch, error)
+
+	// InsertSweepBatch inserts a batch into the database, returning the id
+	// of the inserted batch.
+	InsertSweepBatch(ctx context.Context, batch *Batch) (int32, error)
+
+	// UpdateSweepBatch updates a batch in the database.
+	UpdateSweepBatch(ctx context.Context, batch *Batch) error
+
+	// ConfirmBatch confirms a batch by setting its state to confirmed.
+	ConfirmBatch(ctx context.Context, id int32) error
+
+	// FetchBatchSweeps fetches all the sweeps that belong to a batch.
+	FetchBatchSweeps(ctx context.Context, id int32) ([]*Sweep, error)
+
+	// UpsertSweep inserts a sweep into the database, or updates an existing
+	// sweep if it already exists.
+	UpsertSweep(ctx context.Context, sweep *Sweep) error
+
+	// GetSweepStatus returns the completed status of a sweep.
+	GetSweepStatus(ctx context.Context, swapHash lntypes.Hash) (
+		bool, error)
+
 	// Close closes the underlying database.
 	Close() error
 }

@@ -9,18 +9,25 @@ import (
 )
 
 type Querier interface {
+	ConfirmBatch(ctx context.Context, id int32) error
 	FetchLiquidityParams(ctx context.Context) ([]byte, error)
+	GetBatchSweeps(ctx context.Context, batchID int32) ([]GetBatchSweepsRow, error)
 	GetLoopInSwap(ctx context.Context, swapHash []byte) (GetLoopInSwapRow, error)
 	GetLoopInSwaps(ctx context.Context) ([]GetLoopInSwapsRow, error)
 	GetLoopOutSwap(ctx context.Context, swapHash []byte) (GetLoopOutSwapRow, error)
 	GetLoopOutSwaps(ctx context.Context) ([]GetLoopOutSwapsRow, error)
 	GetSwapUpdates(ctx context.Context, swapHash []byte) ([]SwapUpdate, error)
+	GetSweepStatus(ctx context.Context, swapHash []byte) (bool, error)
+	GetUnconfirmedBatches(ctx context.Context) ([]SweepBatch, error)
+	InsertBatch(ctx context.Context, arg InsertBatchParams) (int32, error)
 	InsertHtlcKeys(ctx context.Context, arg InsertHtlcKeysParams) error
 	InsertLoopIn(ctx context.Context, arg InsertLoopInParams) error
 	InsertLoopOut(ctx context.Context, arg InsertLoopOutParams) error
 	InsertSwap(ctx context.Context, arg InsertSwapParams) error
 	InsertSwapUpdate(ctx context.Context, arg InsertSwapUpdateParams) error
+	UpdateBatch(ctx context.Context, arg UpdateBatchParams) error
 	UpsertLiquidityParams(ctx context.Context, params []byte) error
+	UpsertSweep(ctx context.Context, arg UpsertSweepParams) error
 }
 
 var _ Querier = (*Queries)(nil)

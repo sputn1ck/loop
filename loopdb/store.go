@@ -137,6 +137,9 @@ var (
 	// errInvalidKey is returned when a serialized key is not the expected
 	// length.
 	errInvalidKey = fmt.Errorf("invalid serialized key")
+
+	// errUnimplemented is returned when a method is not implemented.
+	errUnimplemented = fmt.Errorf("unimplemented method")
 )
 
 const (
@@ -750,6 +753,57 @@ func (s *boltSwapStore) FetchLiquidityParams(ctx context.Context) ([]byte,
 	return params, err
 }
 
+// FetchUnconfirmedBatches fetches all the loop out sweep batches from the
+// database that are not in a confirmed state.
+// NOTE: This method will remain unimplemented in the bolt swap store as it is
+// no longer used.
+func (s *boltSwapStore) FetchUnconfirmedSweepBatches(ctx context.Context) (
+	[]*Batch, error) {
+
+	return nil, errUnimplemented
+}
+
+// InsertSweepBatch inserts a batch into the database, returning the id of the
+// inserted batch.
+func (s *boltSwapStore) InsertSweepBatch(ctx context.Context,
+	batch *Batch) (int32, error) {
+
+	return 0, errUnimplemented
+}
+
+// UpdateSweepBatch updates a batch in the database.
+func (s *boltSwapStore) UpdateSweepBatch(ctx context.Context,
+	batch *Batch) error {
+
+	return errUnimplemented
+}
+
+// ConfirmBatch confirms a batch by setting its state to confirmed.
+// NOTE: This method will remain unimplemented in the bolt swap store as it is
+// no longer used.
+func (s *boltSwapStore) ConfirmBatch(ctx context.Context, id int32) error {
+	return errUnimplemented
+}
+
+// UpsertSweep inserts a sweep into the database, or updates an existing one.
+// NOTE: This method will remain unimplemented in the bolt swap store as it is
+// no longer used.
+func (s *boltSwapStore) UpsertSweep(ctx context.Context,
+	sweep *Sweep) error {
+
+	return errUnimplemented
+}
+
+// FetchBatchSweeps fetches all the sweeps from the database that belong to the
+// batch with the given id.
+// NOTE: This method will remain unimplemented in the bolt swap store as it is
+// no longer used.
+func (s *boltSwapStore) FetchBatchSweeps(ctx context.Context, id int32) (
+	[]*Sweep, error) {
+
+	return nil, errUnimplemented
+}
+
 // fetchUpdates deserializes the list of swap updates that are stored as a
 // key of the given bucket.
 func fetchUpdates(swapBucket *bbolt.Bucket) ([]*LoopEvent, error) {
@@ -990,19 +1044,26 @@ func (s *boltSwapStore) fetchLoopInSwap(rootBucket *bbolt.Bucket,
 func (b *boltSwapStore) BatchCreateLoopOut(ctx context.Context,
 	swaps map[lntypes.Hash]*LoopOutContract) error {
 
-	return errors.New("not implemented")
+	return errUnimplemented
 }
 
 // BatchCreateLoopIn creates a batch of loop in swaps to the store.
 func (b *boltSwapStore) BatchCreateLoopIn(ctx context.Context,
 	swaps map[lntypes.Hash]*LoopInContract) error {
 
-	return errors.New("not implemented")
+	return errUnimplemented
 }
 
 // BatchInsertUpdate inserts batch of swap updates to the store.
 func (b *boltSwapStore) BatchInsertUpdate(ctx context.Context,
 	updateData map[lntypes.Hash][]BatchInsertUpdateData) error {
 
-	return errors.New("not implemented")
+	return errUnimplemented
+}
+
+// GetSweepStatus returns the status of a sweep.
+func (b *boltSwapStore) GetSweepStatus(ctx context.Context,
+	swapHash lntypes.Hash) (bool, error) {
+
+	return false, errUnimplemented
 }

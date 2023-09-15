@@ -465,7 +465,7 @@
         "parameters": [
           {
             "name": "list_swap_filter.swap_type",
-            "description": "The type of the swap.\n\n - ANY: ANY indicates that no filter is applied.\n - LOOP_OUT: LOOP_OUT indicates an loop out swap (off-chain to on-chain)\n - LOOP_IN: LOOP_IN indicates a loop in swap (on-chain to off-chain)",
+            "description": "The type of the swap.\n\n - ANY: ANY indicates that no filter is applied.\n - LOOP_OUT: LOOP_OUT indicates an loop out swap (off-chain to on-chain).\n - LOOP_IN: LOOP_IN indicates a loop in swap (on-chain to off-chain).",
             "in": "query",
             "required": false,
             "type": "string",
@@ -549,7 +549,7 @@
         "LOOP_IN"
       ],
       "default": "ANY",
-      "title": "- ANY: ANY indicates that no filter is applied.\n - LOOP_OUT: LOOP_OUT indicates an loop out swap (off-chain to on-chain)\n - LOOP_IN: LOOP_IN indicates a loop in swap (on-chain to off-chain)"
+      "description": " - ANY: ANY indicates that no filter is applied.\n - LOOP_OUT: LOOP_OUT indicates an loop out swap (off-chain to on-chain).\n - LOOP_IN: LOOP_IN indicates a loop in swap (on-chain to off-chain)."
     },
     "looprpcAbandonSwapResponse": {
       "type": "object"
@@ -1064,6 +1064,10 @@
         "account_addr_type": {
           "$ref": "#/definitions/looprpcAddressType",
           "description": "The address type of the account specified in the account field."
+        },
+        "is_external_addr": {
+          "type": "boolean",
+          "description": "A flag indicating whether the defined destination address does not belong to\nthe wallet. This is used to flag whether this loop out swap could have its\nassociated sweep batched."
         }
       }
     },

@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/lndclient"
+	sweepbatcher "github.com/lightninglabs/loop/batcher"
 	"github.com/lightninglabs/loop/loopdb"
 	"github.com/lightninglabs/loop/swap"
 	"github.com/lightninglabs/loop/sweep"
@@ -36,7 +37,7 @@ type testContext struct {
 	serverMock *serverMock
 	swapClient *Client
 	statusChan chan SwapInfo
-	store      *storeMock
+	store      *loopdb.StoreMock
 	expiryChan chan time.Time
 	runErr     chan error
 	stop       func()
@@ -58,10 +59,17 @@ func newSwapClient(config *clientConfig) *Client {
 
 	lndServices := config.LndServices
 
+	batcher := sweepbatcher.NewBatcher(
+		config.LndServices.WalletKit, config.LndServices.ChainNotifier,
+		config.LndServices.Signer, nil, nil,
+		config.LndServices.ChainParams, config.Store,
+	)
+
 	executor := newExecutor(&executorConfig{
 		lnd:               lndServices,
 		store:             config.Store,
 		sweeper:           sweeper,
+		batcher:           batcher,
 		createExpiryTimer: config.CreateExpiryTimer,
 		cancelSwap:        config.Server.CancelLoopOutSwap,
 		verifySchnorrSig:  mockVerifySchnorrSigFail,
@@ -83,15 +91,15 @@ func createClientTestContext(t *testing.T,
 	clientLnd := test.NewMockLnd()
 	serverMock := newServerMock(clientLnd)
 
-	store := newStoreMock(t)
+	store := loopdb.NewStoreMock(t)
 	for _, s := range pendingSwaps {
-		store.loopOutSwaps[s.Hash] = s.Contract
+		store.LoopOutSwaps[s.Hash] = s.Contract
 
 		updates := []loopdb.SwapStateData{}
 		for _, e := range s.Events {
 			updates = append(updates, e.SwapStateData)
 		}
-		store.loopOutUpdates[s.Hash] = updates
+		store.LoopOutUpdates[s.Hash] = updates
 	}
 
 	expiryChan := make(chan time.Time)
@@ -147,7 +155,7 @@ func (ctx *testContext) finish() {
 }
 func (ctx *testContext) assertIsDone() {
 	require.NoError(ctx.Context.T, ctx.Context.Lnd.IsDone())
-	require.NoError(ctx.Context.T, ctx.store.isDone())
+	require.NoError(ctx.Context.T, ctx.store.IsDone())
 
 	select {
 	case <-ctx.statusChan:
@@ -159,19 +167,19 @@ func (ctx *testContext) assertIsDone() {
 func (ctx *testContext) assertStored() {
 	ctx.Context.T.Helper()
 
-	ctx.store.assertLoopOutStored()
+	ctx.store.AssertLoopOutStored()
 }
 
 func (ctx *testContext) assertStorePreimageReveal() {
 	ctx.Context.T.Helper()
 
-	ctx.store.assertStorePreimageReveal()
+	ctx.store.AssertStorePreimageReveal()
 }
 
 func (ctx *testContext) assertStoreFinished(expectedResult loopdb.SwapState) {
 	ctx.Context.T.Helper()
 
-	ctx.store.assertStoreFinished(expectedResult)
+	ctx.store.AssertStoreFinished(expectedResult)
 }
 
 func (ctx *testContext) assertStatus(expectedState loopdb.SwapState) {

@@ -11,9 +11,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightninglabs/lndclient"
-	sweepbatcher "github.com/lightninglabs/loop/batcher"
 	"github.com/lightninglabs/loop/loopdb"
 	"github.com/lightninglabs/loop/sweep"
+	"github.com/lightninglabs/loop/sweepbatcher"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/queue"
 )

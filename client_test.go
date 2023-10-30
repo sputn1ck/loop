@@ -13,6 +13,7 @@ import (
 	"github.com/lightninglabs/loop/loopdb"
 	"github.com/lightninglabs/loop/swap"
 	"github.com/lightninglabs/loop/test"
+	"github.com/lightninglabs/loop/utils"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/stretchr/testify/require"
@@ -146,8 +147,6 @@ func TestLoopOutFailWrongAmount(t *testing.T) {
 // TestLoopOutResume tests that swaps in various states are properly resumed
 // after a restart.
 func TestLoopOutResume(t *testing.T) {
-	defer test.Guard(t)()
-
 	defaultConfs := loopdb.DefaultLoopOutHtlcConfirmations
 
 	storedVersion := []loopdb.ProtocolVersion{
@@ -279,7 +278,7 @@ func testLoopOutResume(t *testing.T, confs uint32, expired, preimageRevealed,
 		preimageRevealed, int32(confs),
 	)
 
-	htlc, err := GetHtlc(
+	htlc, err := utils.GetHtlc(
 		hash, &pendingSwap.Contract.SwapContract,
 		&chaincfg.TestNet3Params,
 	)
@@ -304,7 +303,7 @@ func testLoopOutResume(t *testing.T, confs uint32, expired, preimageRevealed,
 		func(r error) {},
 		func(r error) {},
 		preimageRevealed,
-		confIntent, GetHtlcScriptVersion(protocolVersion),
+		confIntent, utils.GetHtlcScriptVersion(protocolVersion),
 	)
 }
 
@@ -317,7 +316,20 @@ func testLoopOutSuccess(ctx *testContext, amt btcutil.Amount, hash lntypes.Hash,
 
 	signalPrepaymentResult(nil)
 
+	// One spend notifier is registered by batch to watch primary sweep.
 	ctx.AssertRegisterSpendNtfn(confIntent.PkScript)
+
+	ctx.AssertEpochListeners(2)
+
+	// We need to notify for a new block height because that's when the
+	// batch tries to publish a new transaction. We need to call the lnd
+	// mock twice, because both executor and batcher are watching the epoch
+	// ntfns.
+	err := ctx.Lnd.NotifyHeight(ctx.Lnd.Height + 1)
+	require.NoError(ctx.Context.T, err)
+
+	err = ctx.Lnd.NotifyHeight(ctx.Lnd.Height + 1)
+	require.NoError(ctx.Context.T, err)
 
 	// Assert that a call to track payment was sent, and respond with status
 	// in flight so that our swap will push its preimage to the server.
@@ -341,13 +353,6 @@ func testLoopOutSuccess(ctx *testContext, amt btcutil.Amount, hash lntypes.Hash,
 	// our MuSig2 signing attempts.
 	if scriptVersion == swap.HtlcV3 {
 		ctx.assertPreimagePush(ctx.store.LoopOutSwaps[hash].Preimage)
-
-		// Try MuSig2 signing first and fail it so that we go for a
-		// normal sweep.
-		for i := 0; i < maxMusigSweepRetries; i++ {
-			ctx.expiryChan <- testTime
-			ctx.assertPreimagePush(ctx.store.LoopOutSwaps[hash].Preimage)
-		}
 		<-ctx.Context.Lnd.SignOutputRawChannel
 	}
 
@@ -387,6 +392,8 @@ func testLoopOutSuccess(ctx *testContext, amt btcutil.Amount, hash lntypes.Hash,
 	signalSwapPaymentResult(nil)
 
 	ctx.NotifySpend(sweepTx, 0)
+
+	ctx.AssertRegisterConf(true, 3)
 
 	ctx.assertStatus(loopdb.StateSuccess)
 

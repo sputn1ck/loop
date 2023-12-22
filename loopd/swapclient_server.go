@@ -98,6 +98,7 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 	log.Infof("Loop out request received")
 
 	var sweepAddr btcutil.Address
+	var isExternalAddr bool
 	var err error
 	//nolint:lll
 	switch {
@@ -114,6 +115,8 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		if err != nil {
 			return nil, fmt.Errorf("decode address: %v", err)
 		}
+
+		isExternalAddr = true
 
 	case in.Account != "" && in.AccountAddrType == clientrpc.AddressType_ADDRESS_TYPE_UNKNOWN:
 		return nil, liquidity.ErrAccountAndAddrType
@@ -138,6 +141,8 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 			return nil, fmt.Errorf("NextAddr from account error: "+
 				"%v", err)
 		}
+
+		isExternalAddr = true
 
 	default:
 		// Generate sweep address if none specified.
@@ -164,6 +169,7 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 	req := &loop.OutRequest{
 		Amount:                  btcutil.Amount(in.Amt),
 		DestAddr:                sweepAddr,
+		IsExternalAddr:          isExternalAddr,
 		MaxMinerFee:             btcutil.Amount(in.MaxMinerFee),
 		MaxPrepayAmount:         btcutil.Amount(in.MaxPrepayAmt),
 		MaxPrepayRoutingFee:     btcutil.Amount(in.MaxPrepayRoutingFee),

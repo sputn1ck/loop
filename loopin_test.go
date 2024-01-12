@@ -278,14 +278,15 @@ func testLoopInTimeout(t *testing.T, externalValue int64) {
 	}
 
 	// Assert that the swap is failed in case of an invalid amount.
-	invalidAmt := externalValue != 0 && externalValue != int64(req.Amount)
-	if invalidAmt {
-		ctx.assertState(loopdb.StateFailIncorrectHtlcAmt)
-		ctx.store.AssertLoopInState(loopdb.StateFailIncorrectHtlcAmt)
+	isInvalidAmt := externalValue != 0 && externalValue != int64(req.Amount)
+	handleValidAmountTimeout(
+		t, ctx, inSwap, htlcTx, cost, errChan, isInvalidAmt,
+	)
+}
 
-		require.NoError(t, <-errChan)
-		return
-	}
+func handleValidAmountTimeout(t *testing.T, ctx *loopInTestContext,
+	inSwap *loopInSwap, htlcTx wire.MsgTx, cost loopdb.SwapCost,
+	errChan chan error, isInvalidAmount bool) {
 
 	// Client starts listening for spend of htlc.
 	<-ctx.lnd.RegisterSpendChannel
@@ -329,8 +330,16 @@ func testLoopInTimeout(t *testing.T, externalValue int64) {
 	// Signal that the invoice was canceled.
 	ctx.updateInvoiceState(0, invpkg.ContractCanceled)
 
-	ctx.assertState(loopdb.StateFailTimeout)
-	state := ctx.store.AssertLoopInState(loopdb.StateFailTimeout)
+	var state loopdb.SwapStateData
+	if isInvalidAmount {
+		ctx.assertState(loopdb.StateFailIncorrectHtlcAmtSwept)
+		state = ctx.store.AssertLoopInState(
+			loopdb.StateFailIncorrectHtlcAmtSwept,
+		)
+	} else {
+		ctx.assertState(loopdb.StateFailTimeout)
+		state = ctx.store.AssertLoopInState(loopdb.StateFailTimeout)
+	}
 	require.Equal(t, cost, state.Cost)
 
 	require.NoError(t, <-errChan)

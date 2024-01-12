@@ -72,6 +72,11 @@ const (
 	// StateFailInsufficientConfirmedBalance indicates that the swap wasn't
 	// published due to insufficient confirmed balance.
 	StateFailInsufficientConfirmedBalance SwapState = 12
+
+	// StateFailIncorrectHtlcAmtSwept indicates that the amount of an
+	// externally published loop in htlc that didn't match the swap amount
+	// has been swept back to the user after the htlc timeout period.
+	StateFailIncorrectHtlcAmtSwept SwapState = 13
 )
 
 // SwapStateType defines the types of swap states that exist. Every swap state

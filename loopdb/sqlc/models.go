@@ -5,6 +5,7 @@
 package sqlc
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -16,6 +17,27 @@ type HtlcKey struct {
 	ReceiverInternalPubkey []byte
 	ClientKeyFamily        int32
 	ClientKeyIndex         int32
+}
+
+type InstantoutSwap struct {
+	SwapHash                  []byte
+	Preimage                  []byte
+	SweepAddress              string
+	OutgoingChanSet           string
+	HtlcFeeRate               int64
+	ReservationIds            []byte
+	SwapInvoice               string
+	FinalizedHtlcTx           []byte
+	SweepTxHash               []byte
+	FinalizedSweeplessSweepTx []byte
+	SweepConfirmationHeight   sql.NullInt32
+}
+
+type InstantoutUpdate struct {
+	ID              int32
+	SwapHash        []byte
+	UpdateState     string
+	UpdateTimestamp time.Time
 }
 
 type LiquidityParam struct {
@@ -41,6 +63,28 @@ type LoopoutSwap struct {
 	PrepayInvoice       string
 	MaxPrepayRoutingFee int64
 	PublicationDeadline time.Time
+}
+
+type Reservation struct {
+	ID                 int32
+	ReservationID      []byte
+	ClientPubkey       []byte
+	ServerPubkey       []byte
+	Expiry             int32
+	Value              int64
+	ClientKeyFamily    int32
+	ClientKeyIndex     int32
+	InitiationHeight   int32
+	TxHash             []byte
+	OutIndex           sql.NullInt32
+	ConfirmationHeight sql.NullInt32
+}
+
+type ReservationUpdate struct {
+	ID              int32
+	ReservationID   []byte
+	UpdateState     string
+	UpdateTimestamp time.Time
 }
 
 type Swap struct {

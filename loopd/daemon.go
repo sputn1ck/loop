@@ -16,9 +16,15 @@ import (
 	proxy "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
+	"github.com/lightninglabs/loop/instantout"
 	"github.com/lightninglabs/loop/loopd/perms"
 	"github.com/lightninglabs/loop/loopdb"
-	"github.com/lightninglabs/loop/looprpc"
+
+	"github.com/lightninglabs/loop/instantout/reservation"
+	loop_looprpc "github.com/lightninglabs/loop/looprpc"
+
+	loop_swaprpc "github.com/lightninglabs/loop/swapserverrpc"
+	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"google.golang.org/grpc"
@@ -226,7 +232,7 @@ func (d *Daemon) startWebServers() error {
 		grpc.UnaryInterceptor(unaryInterceptor),
 		grpc.StreamInterceptor(streamInterceptor),
 	)
-	looprpc.RegisterSwapClientServer(d.grpcServer, d)
+	loop_looprpc.RegisterSwapClientServer(d.grpcServer, d)
 
 	// Register our debug server if it is compiled in.
 	d.registerDebugServer()
@@ -286,7 +292,7 @@ func (d *Daemon) startWebServers() error {
 			restProxyDest, "[::]", "[::1]", 1,
 		)
 	}
-	err = looprpc.RegisterSwapClientHandlerFromEndpoint(
+	err = loop_looprpc.RegisterSwapClientHandlerFromEndpoint(
 		ctx, mux, restProxyDest, proxyOpts,
 	)
 	if err != nil {
@@ -399,7 +405,7 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		return err
 	}
 
-	swapDb, _, err := openDatabase(d.cfg, chainParams)
+	swapDb, baseDb, err := openDatabase(d.cfg, chainParams)
 	if err != nil {
 		return err
 	}
@@ -412,6 +418,20 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		return err
 	}
 	d.clientCleanup = clientCleanup
+
+	// Create a reservation server client.
+	reservationClient := loop_swaprpc.NewReservationServiceClient(
+		swapClient.Conn,
+	)
+
+	// Create an instantout server client.
+	instantOutClient := loop_swaprpc.NewInstantSwapServerClient(
+		swapClient.Conn,
+	)
+
+	// Both the client RPC server and the swap server client should stop
+	// on main context cancel. So we create it early and pass it down.
+	d.mainCtx, d.mainCtxCancel = context.WithCancel(context.Background())
 
 	// Add our debug permissions to our main set of required permissions
 	// if compiled in.
@@ -466,17 +486,52 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		}
 	}
 
+	// Create the reservation services.
+	reservationStore := reservation.NewSQLStore(baseDb)
+	reservationConfig := &reservation.Config{
+		Store:             reservationStore,
+		Wallet:            d.lnd.WalletKit,
+		ChainNotifier:     d.lnd.ChainNotifier,
+		ReservationClient: reservationClient,
+		FetchL402:         swapClient.Server.FetchL402,
+	}
+
+	reservationManager := reservation.NewReservationManager(
+		reservationConfig,
+	)
+
+	// Create the instantout services.
+	instantOutStore := instantout.NewSQLStore(
+		baseDb, clock.NewDefaultClock(), reservationStore,
+		d.lnd.ChainParams,
+	)
+	instantOutConfig := &instantout.Config{
+		Store:              instantOutStore,
+		LndClient:          d.lnd.Client,
+		RouterClient:       d.lnd.Router,
+		ChainNotifier:      d.lnd.ChainNotifier,
+		Signer:             d.lnd.Signer,
+		Wallet:             d.lnd.WalletKit,
+		ReservationManager: reservationManager,
+		InstantOutClient:   instantOutClient,
+		Network:            d.lnd.ChainParams,
+	}
+
+	instantOutManager := instantout.NewInstantOutManager(instantOutConfig)
+
 	// Now finally fully initialize the swap client RPC server instance.
 	d.swapClientServer = swapClientServer{
-		config:       d.cfg,
-		network:      lndclient.Network(d.cfg.Network),
-		impl:         swapClient,
-		liquidityMgr: getLiquidityManager(swapClient),
-		lnd:          &d.lnd.LndServices,
-		swaps:        make(map[lntypes.Hash]loop.SwapInfo),
-		subscribers:  make(map[int]chan<- interface{}),
-		statusChan:   make(chan loop.SwapInfo),
-		mainCtx:      d.mainCtx,
+		config:             d.cfg,
+		network:            lndclient.Network(d.cfg.Network),
+		impl:               swapClient,
+		liquidityMgr:       getLiquidityManager(swapClient),
+		lnd:                &d.lnd.LndServices,
+		swaps:              make(map[lntypes.Hash]loop.SwapInfo),
+		subscribers:        make(map[int]chan<- interface{}),
+		statusChan:         make(chan loop.SwapInfo),
+		mainCtx:            d.mainCtx,
+		reservationManager: reservationManager,
+		instantOutManager:  instantOutManager,
 	}
 
 	// Retrieve all currently existing swaps from the database.
@@ -541,6 +596,52 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		}
 
 		log.Info("Liquidity manager stopped")
+	}()
+
+	// Start the reservation manager.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+
+		// We need to know the current block height to properly
+		// initialize the reservation manager.
+		getInfo, err := d.lnd.Client.GetInfo(d.mainCtx)
+		if err != nil {
+			d.internalErrChan <- err
+			return
+		}
+
+		log.Info("Starting reservation manager")
+		defer log.Info("Reservation manager stopped")
+
+		err = d.reservationManager.Run(
+			d.mainCtx, int32(getInfo.BlockHeight),
+		)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			d.internalErrChan <- err
+		}
+	}()
+
+	// Start the instant out manager.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+
+		getInfo, err := d.lnd.Client.GetInfo(d.mainCtx)
+		if err != nil {
+			d.internalErrChan <- err
+			return
+		}
+
+		log.Info("Starting instantout manager")
+		defer log.Info("Instantout manager stopped")
+
+		err = d.instantOutManager.Run(
+			d.mainCtx, int32(getInfo.BlockHeight),
+		)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			d.internalErrChan <- err
+		}
 	}()
 
 	// Last, start our internal error handler. This will return exactly one

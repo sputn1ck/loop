@@ -6,6 +6,8 @@ import (
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
 	"github.com/lightninglabs/loop/fsm"
+	"github.com/lightninglabs/loop/instantout"
+	"github.com/lightninglabs/loop/instantout/reservation"
 	"github.com/lightninglabs/loop/liquidity"
 	"github.com/lightninglabs/loop/loopdb"
 	"github.com/lightningnetwork/lnd"
@@ -38,6 +40,12 @@ func SetupLoggers(root *build.RotatingLogWriter, intercept signal.Interceptor) {
 		root, liquidity.Subsystem, intercept, liquidity.UseLogger,
 	)
 	lnd.AddSubLogger(root, fsm.Subsystem, intercept, fsm.UseLogger)
+	lnd.AddSubLogger(
+		root, reservation.Subsystem, intercept, reservation.UseLogger,
+	)
+	lnd.AddSubLogger(
+		root, instantout.Subsystem, intercept, instantout.UseLogger,
+	)
 }
 
 // genSubLogger creates a logger for a subsystem. We provide an instance of

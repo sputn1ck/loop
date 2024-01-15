@@ -258,3 +258,11 @@ func (ctx *testContext) assertPreimagePush(preimage lntypes.Preimage) {
 		ctx.Context.T.Fatalf("preimage not pushed")
 	}
 }
+
+func (ctx *testContext) AssertEpochListeners(numListeners int32) {
+	ctx.Context.T.Helper()
+
+	require.Eventually(ctx.Context.T, func() bool {
+		return int32(len(ctx.Lnd.EpochChannels)) == numListeners
+	}, test.Timeout, time.Millisecond*250)
+}

@@ -64,7 +64,7 @@ func NewMockLnd() *LndMockServices {
 		SignOutputRawChannel: make(chan SignOutputRawRequest),
 
 		FailInvoiceChannel: make(chan lntypes.Hash, 2),
-		epochChannel:       make(chan int32),
+		EpochChannels:      make([]chan int32, 0),
 		Height:             testStartingHeight,
 		NodePubkey:         testNodePubkey,
 		Signature:          testSignature,
@@ -139,7 +139,7 @@ type LndMockServices struct {
 	SendOutputsChannel   chan wire.MsgTx
 	SettleInvoiceChannel chan lntypes.Preimage
 	FailInvoiceChannel   chan lntypes.Hash
-	epochChannel         chan int32
+	EpochChannels        []chan int32
 
 	ConfChannel          chan *chainntnfs.TxConfirmation
 	RegisterConfChannel  chan *ConfRegistration
@@ -177,14 +177,20 @@ type LndMockServices struct {
 	lock sync.Mutex
 }
 
+func (s *LndMockServices) RegisterNotifyHeightChan(channel chan int32) {
+	s.EpochChannels = append(s.EpochChannels, channel)
+}
+
 // NotifyHeight notifies a new block height.
 func (s *LndMockServices) NotifyHeight(height int32) error {
 	s.Height = height
 
-	select {
-	case s.epochChannel <- height:
-	case <-time.After(Timeout):
-		return ErrTimeout
+	for _, epochChan := range s.EpochChannels {
+		select {
+		case epochChan <- height:
+		case <-time.After(Timeout):
+			return ErrTimeout
+		}
 	}
 	return nil
 }

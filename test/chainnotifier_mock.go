@@ -86,9 +86,14 @@ func (c *mockChainNotifier) RegisterBlockEpochNtfn(ctx context.Context) (
 			return
 		}
 
+		heightChan := make(chan int32)
+		defer close(heightChan)
+
+		c.lnd.RegisterNotifyHeightChan(heightChan)
+
 		for {
 			select {
-			case m := <-c.lnd.epochChannel:
+			case m := <-heightChan:
 				select {
 				case blockEpochChan <- m:
 				case <-ctx.Done():

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -37,8 +37,8 @@ func (s *BaseDB) FetchLoopOutSwaps(ctx context.Context) ([]*LoopOut,
 				return err
 			}
 
-			loopOut, err := s.convertLoopOutRow(
-				sqlc.GetLoopOutSwapRow(swap), updates,
+			loopOut, err := ConvertLoopOutRow(
+				s.network, sqlc.GetLoopOutSwapRow(swap), updates,
 			)
 			if err != nil {
 				return err
@@ -73,8 +73,8 @@ func (s *BaseDB) FetchLoopOutSwap(ctx context.Context,
 			return err
 		}
 
-		loopOut, err = s.convertLoopOutRow(
-			swap, updates,
+		loopOut, err = ConvertLoopOutRow(
+			s.network, swap, updates,
 		)
 		if err != nil {
 			return err
@@ -404,99 +404,6 @@ func (s *BaseDB) BatchInsertUpdate(ctx context.Context,
 	})
 }
 
-// FetchUnconfirmedSweepBatches fetches all the batches from the database that
-// are not in a confirmed state.
-func (s *BaseDB) FetchUnconfirmedSweepBatches(ctx context.Context) ([]*Batch,
-	error) {
-
-	var batches []*Batch
-
-	dbBatches, err := s.GetUnconfirmedBatches(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, dbBatch := range dbBatches {
-		batch := convertBatchRow(dbBatch)
-		if err != nil {
-			return nil, err
-		}
-
-		batches = append(batches, batch)
-	}
-
-	return batches, err
-}
-
-// InsertSweepBatch inserts a batch into the database, returning the id of the
-// inserted batch.
-func (s *BaseDB) InsertSweepBatch(ctx context.Context, batch *Batch) (int32,
-	error) {
-
-	return s.Queries.InsertBatch(ctx, batchToInsertArgs(*batch))
-}
-
-// UpdateSweepBatch updates a batch in the database.
-func (s *BaseDB) UpdateSweepBatch(ctx context.Context, batch *Batch) error {
-	return s.Queries.UpdateBatch(ctx, batchToUpdateArgs(*batch))
-}
-
-// ConfirmBatch confirms a batch by setting the state to confirmed.
-func (s *BaseDB) ConfirmBatch(ctx context.Context, id int32) error {
-	return s.Queries.ConfirmBatch(ctx, id)
-}
-
-// FetchBatchSweeps fetches all the sweeps that are part a batch.
-func (s *BaseDB) FetchBatchSweeps(ctx context.Context, id int32) (
-	[]*Sweep, error) {
-
-	readOpts := NewSqlReadOpts()
-	var sweeps []*Sweep
-
-	err := s.ExecTx(ctx, readOpts, func(tx *sqlc.Queries) error {
-		dbSweeps, err := tx.GetBatchSweeps(ctx, id)
-		if err != nil {
-			return err
-		}
-
-		for _, dbSweep := range dbSweeps {
-			updates, err := s.Queries.GetSwapUpdates(
-				ctx, dbSweep.SwapHash,
-			)
-			if err != nil {
-				return err
-			}
-
-			sweep, err := s.convertSweepRow(dbSweep, updates)
-			if err != nil {
-				return err
-			}
-
-			sweeps = append(sweeps, &sweep)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return sweeps, nil
-}
-
-// UpsertSweep inserts a sweep into the database, or updates an existing sweep
-// if it already exists.
-func (s *BaseDB) UpsertSweep(ctx context.Context, sweep *Sweep) error {
-	return s.Queries.UpsertSweep(ctx, sweepToUpsertArgs(*sweep))
-}
-
-// GetSweepStatus returns true if the sweep has been completed.
-func (s *BaseDB) GetSweepStatus(ctx context.Context, swapHash lntypes.Hash) (
-	bool, error) {
-
-	return s.Queries.GetSweepStatus(ctx, swapHash[:])
-}
-
 // loopToInsertArgs converts a SwapContract struct to the arguments needed to
 // insert it into the database.
 func loopToInsertArgs(hash lntypes.Hash,
@@ -576,7 +483,7 @@ func swapToHtlcKeysInsertArgs(hash lntypes.Hash,
 
 // convertLoopOutRow converts a database row containing a loop out swap to a
 // LoopOut struct.
-func (s *BaseDB) convertLoopOutRow(row sqlc.GetLoopOutSwapRow,
+func ConvertLoopOutRow(network *chaincfg.Params, row sqlc.GetLoopOutSwapRow,
 	updates []sqlc.SwapUpdate) (*LoopOut, error) {
 
 	htlcKeys, err := fetchHtlcKeys(
@@ -593,7 +500,7 @@ func (s *BaseDB) convertLoopOutRow(row sqlc.GetLoopOutSwapRow,
 		return nil, err
 	}
 
-	destAddress, err := btcutil.DecodeAddress(row.DestAddress, s.network)
+	destAddress, err := btcutil.DecodeAddress(row.DestAddress, network)
 	if err != nil {
 		return nil, err
 	}
@@ -724,157 +631,6 @@ func (s *BaseDB) convertLoopInRow(row sqlc.GetLoopInSwapsRow,
 	loopIn.Events = events
 
 	return loopIn, nil
-}
-
-// convertBatchRow converts a batch row from db to a sweepbatcher.Batch struct.
-func convertBatchRow(row sqlc.SweepBatch) *Batch {
-	batch := Batch{
-		ID:    row.ID,
-		State: row.State,
-	}
-
-	if row.BatchTxID.Valid {
-		err := chainhash.Decode(&batch.BatchTxid, row.BatchTxID.String)
-		if err != nil {
-			return nil
-		}
-	}
-
-	batch.BatchPkScript = row.BatchPkScript
-
-	if row.LastRbfHeight.Valid {
-		batch.LastRbfHeight = row.LastRbfHeight.Int32
-	}
-
-	if row.LastRbfSatPerKw.Valid {
-		batch.LastRbfSatPerKw = row.LastRbfSatPerKw.Int32
-	}
-
-	batch.MaxTimeoutDistance = row.MaxTimeoutDistance
-
-	return &batch
-}
-
-// BatchToUpsertArgs converts a Batch struct to the arguments needed to insert
-// it into the database.
-func batchToInsertArgs(batch Batch) sqlc.InsertBatchParams {
-	args := sqlc.InsertBatchParams{
-		State: batch.State,
-		BatchTxID: sql.NullString{
-			Valid:  true,
-			String: batch.BatchTxid.String(),
-		},
-		BatchPkScript: batch.BatchPkScript,
-		LastRbfHeight: sql.NullInt32{
-			Valid: true,
-			Int32: batch.LastRbfHeight,
-		},
-		LastRbfSatPerKw: sql.NullInt32{
-			Valid: true,
-			Int32: batch.LastRbfSatPerKw,
-		},
-		MaxTimeoutDistance: batch.MaxTimeoutDistance,
-	}
-
-	return args
-}
-
-// BatchToUpsertArgs converts a Batch struct to the arguments needed to insert
-// it into the database.
-func batchToUpdateArgs(batch Batch) sqlc.UpdateBatchParams {
-	args := sqlc.UpdateBatchParams{
-		ID:    batch.ID,
-		State: batch.State,
-		BatchTxID: sql.NullString{
-			Valid:  true,
-			String: batch.BatchTxid.String(),
-		},
-		BatchPkScript: batch.BatchPkScript,
-		LastRbfHeight: sql.NullInt32{
-			Valid: true,
-			Int32: batch.LastRbfHeight,
-		},
-		LastRbfSatPerKw: sql.NullInt32{
-			Valid: true,
-			Int32: batch.LastRbfSatPerKw,
-		},
-	}
-
-	return args
-}
-
-// convertSweepRow converts a sweep row from db to a sweep struct.
-func (s *BaseDB) convertSweepRow(row sqlc.GetBatchSweepsRow,
-	updates []sqlc.SwapUpdate) (Sweep, error) {
-
-	sweep := Sweep{
-		ID:      row.ID,
-		BatchID: row.BatchID,
-		Amount:  btcutil.Amount(row.Amt),
-	}
-
-	swapHash, err := lntypes.MakeHash(row.SwapHash)
-	if err != nil {
-		return sweep, err
-	}
-
-	sweep.SwapHash = swapHash
-
-	hash, err := chainhash.NewHash(row.OutpointTxid)
-	if err != nil {
-		return sweep, err
-	}
-
-	sweep.Outpoint = wire.OutPoint{
-		Hash:  *hash,
-		Index: uint32(row.OutpointIndex),
-	}
-
-	sweep.LoopOut, err = s.convertLoopOutRow(
-		sqlc.GetLoopOutSwapRow{
-			ID:                     row.ID,
-			SwapHash:               row.SwapHash,
-			Preimage:               row.Preimage,
-			InitiationTime:         row.InitiationTime,
-			AmountRequested:        row.AmountRequested,
-			CltvExpiry:             row.CltvExpiry,
-			MaxMinerFee:            row.MaxMinerFee,
-			MaxSwapFee:             row.MaxSwapFee,
-			InitiationHeight:       row.InitiationHeight,
-			ProtocolVersion:        row.ProtocolVersion,
-			Label:                  row.Label,
-			DestAddress:            row.DestAddress,
-			SwapInvoice:            row.SwapInvoice,
-			MaxSwapRoutingFee:      row.MaxSwapRoutingFee,
-			SweepConfTarget:        row.SweepConfTarget,
-			HtlcConfirmations:      row.HtlcConfirmations,
-			OutgoingChanSet:        row.OutgoingChanSet,
-			PrepayInvoice:          row.PrepayInvoice,
-			MaxPrepayRoutingFee:    row.MaxPrepayRoutingFee,
-			PublicationDeadline:    row.PublicationDeadline,
-			SingleSweep:            row.SingleSweep,
-			SenderScriptPubkey:     row.SenderScriptPubkey,
-			ReceiverScriptPubkey:   row.ReceiverScriptPubkey,
-			SenderInternalPubkey:   row.SenderInternalPubkey,
-			ReceiverInternalPubkey: row.ReceiverInternalPubkey,
-			ClientKeyFamily:        row.ClientKeyFamily,
-			ClientKeyIndex:         row.ClientKeyIndex,
-		}, updates,
-	)
-
-	return sweep, err
-}
-
-// sweepToUpsertArgs converts a Sweep struct to the arguments needed to insert.
-func sweepToUpsertArgs(sweep Sweep) sqlc.UpsertSweepParams {
-	return sqlc.UpsertSweepParams{
-		SwapHash:      sweep.SwapHash[:],
-		BatchID:       sweep.BatchID,
-		OutpointTxid:  sweep.Outpoint.Hash[:],
-		OutpointIndex: int32(sweep.Outpoint.Index),
-		Amt:           int64(sweep.Amount),
-		Completed:     sweep.Completed,
-	}
 }
 
 // getSwapEvents returns a slice of LoopEvents for the swap.

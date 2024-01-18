@@ -1198,7 +1198,7 @@ func (b *batch) handleConf(ctx context.Context) error {
 
 // persist updates the batch in the database.
 func (b *batch) persist(ctx context.Context) error {
-	bch := &loopdb.Batch{}
+	bch := &Batch{}
 
 	bch.ID = b.id
 	bch.State = stateEnumToString(b.state)
@@ -1255,7 +1255,7 @@ func (b *batch) getBatchDestAddr(ctx context.Context) (btcutil.Address, error) {
 }
 
 func (b *batch) insertAndAcquireID(ctx context.Context) (int32, error) {
-	bch := &loopdb.Batch{}
+	bch := &Batch{}
 	bch.State = stateEnumToString(b.state)
 	bch.MaxTimeoutDistance = b.Cfg.MaxTimeoutDistance
 
@@ -1280,7 +1280,7 @@ func (b *batch) writeToErrChan(ctx context.Context, err error) {
 func (b *batch) persistSweep(ctx context.Context, sweep sweep,
 	completed bool) error {
 
-	return b.store.UpsertSweep(ctx, &loopdb.Sweep{
+	return b.store.UpsertSweep(ctx, &Sweep{
 		BatchID:   b.id,
 		SwapHash:  sweep.swapHash,
 		Outpoint:  sweep.outpoint,

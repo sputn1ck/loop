@@ -3,7 +3,6 @@ package loopdb
 import (
 	"context"
 	"errors"
-	"sort"
 	"testing"
 	"time"
 
@@ -24,9 +23,6 @@ type StoreMock struct {
 	loopInStoreChan  chan LoopInContract
 	loopInUpdateChan chan SwapStateData
 
-	batches map[int32]Batch
-	sweeps  map[lntypes.Hash]Sweep
-
 	t *testing.T
 }
 
@@ -42,9 +38,6 @@ func NewStoreMock(t *testing.T) *StoreMock {
 		loopInUpdateChan: make(chan SwapStateData, 1),
 		LoopInSwaps:      make(map[lntypes.Hash]*LoopInContract),
 		LoopInUpdates:    make(map[lntypes.Hash][]SwapStateData),
-
-		batches: make(map[int32]Batch),
-		sweeps:  make(map[lntypes.Hash]Sweep),
 
 		t: t,
 	}
@@ -230,97 +223,6 @@ func (s *StoreMock) FetchLiquidityParams(ctx context.Context) ([]byte, error) {
 	return nil, nil
 }
 
-// FetchUnconfirmedBatches fetches all the loop out sweep batches from the
-// database that are not in a confirmed state.
-func (s *StoreMock) FetchUnconfirmedSweepBatches(ctx context.Context) (
-	[]*Batch, error) {
-
-	result := []*Batch{}
-	for _, batch := range s.batches {
-		batch := batch
-		if batch.State != "confirmed" {
-			result = append(result, &batch)
-		}
-	}
-
-	return result, nil
-}
-
-// InsertSweepBatch inserts a batch into the database, returning the id of the
-// inserted batch.
-func (s *StoreMock) InsertSweepBatch(ctx context.Context,
-	batch *Batch) (int32, error) {
-
-	var id int32
-
-	if len(s.batches) == 0 {
-		id = 0
-	} else {
-		id = int32(len(s.batches))
-	}
-
-	s.batches[id] = *batch
-	return id, nil
-}
-
-// UpdateSweepBatch updates a batch in the database.
-func (s *StoreMock) UpdateSweepBatch(ctx context.Context,
-	batch *Batch) error {
-
-	s.batches[batch.ID] = *batch
-	return nil
-}
-
-// ConfirmBatch confirms a batch.
-func (s *StoreMock) ConfirmBatch(ctx context.Context, id int32) error {
-	batch, ok := s.batches[id]
-	if !ok {
-		return errors.New("batch not found")
-	}
-
-	batch.State = "confirmed"
-	s.batches[batch.ID] = batch
-
-	return nil
-}
-
-// FetchBatchSweeps fetches all the sweeps that belong to a batch.
-func (s *StoreMock) FetchBatchSweeps(ctx context.Context,
-	id int32) ([]*Sweep, error) {
-
-	result := []*Sweep{}
-	for _, sweep := range s.sweeps {
-		sweep := sweep
-		if sweep.BatchID == id {
-			result = append(result, &sweep)
-		}
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].ID < result[j].ID
-	})
-
-	return result, nil
-}
-
-// UpsertSweep inserts a sweep into the database, or updates an existing sweep.
-func (s *StoreMock) UpsertSweep(ctx context.Context, sweep *Sweep) error {
-	s.sweeps[sweep.SwapHash] = *sweep
-	return nil
-}
-
-// GetSweepStatus returns the status of a sweep.
-func (s *StoreMock) GetSweepStatus(ctx context.Context,
-	swapHash lntypes.Hash) (bool, error) {
-
-	sweep, ok := s.sweeps[swapHash]
-	if !ok {
-		return false, nil
-	}
-
-	return sweep.Completed, nil
-}
-
 // Close closes the store.
 func (s *StoreMock) Close() error {
 	return nil
@@ -413,16 +315,6 @@ func (s *StoreMock) AssertStoreFinished(expectedResult SwapState) {
 
 	case <-time.After(test.Timeout):
 		s.t.Fatalf("expected swap to be finished")
-	}
-}
-
-// AssertSweepStored asserts that a sweep is stored.
-func (s *StoreMock) AssertSweepStored(id lntypes.Hash) {
-	s.t.Helper()
-
-	_, ok := s.sweeps[id]
-	if !ok {
-		s.t.Fatalf("expected sweep to be stored")
 	}
 }
 

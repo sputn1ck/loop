@@ -379,6 +379,7 @@ func (s *swapClientServer) marshallSwap(loopSwap *loop.SwapInfo) (
 		Label:            loopSwap.Label,
 		LastHop:          lastHop,
 		OutgoingChanSet:  outGoingChanSet,
+		HtlcExpiry:       uint32(loopSwap.CltvExpiry),
 	}, nil
 }
 

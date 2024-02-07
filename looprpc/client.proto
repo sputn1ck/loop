@@ -458,6 +458,9 @@ message SwapStatus {
 
     // An optional label given to the swap on creation.
     string label = 15;
+
+    // The expiry height of the on-chain htlc.
+    uint32 htlc_expiry = 19;
 }
 
 enum SwapType {

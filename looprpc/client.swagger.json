@@ -1458,6 +1458,11 @@
         "label": {
           "type": "string",
           "description": "An optional label given to the swap on creation."
+        },
+        "htlc_expiry": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The expiry height of the on-chain htlc."
         }
       }
     },

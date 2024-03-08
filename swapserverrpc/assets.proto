@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+// We can't change this to swapserverrpc, it would be a breaking change because
+// the package name is also contained in the HTTP URIs and old clients would
+// call the wrong endpoints. Luckily with the go_package option we can have
+// different golang and RPC package names to fix protobuf namespace conflicts.
+package looprpc;
+
+option go_package = "github.com/lightninglabs/loop/swapserverrpc";
+
+service AssetsSwapServer {
+    rpc RequestAssetLoopOut (RequestAssetLoopOutRequest)
+        returns (RequestAssetLoopOutResponse);
+    rpc RequestAssetBuy (RequestAssetBuyRequest)
+        returns (RequestAssetBuyResponse);
+    rpc RequestMusig2Sweep (RequestMusig2SweepRequest)
+        returns (RequestMusig2SweepResponse);
+}
+
+message RequestAssetLoopOutRequest {
+    uint64 amount = 1;
+    bytes receiver_key = 2;
+    bytes requested_asset = 3;
+}
+
+message RequestAssetLoopOutResponse {
+    bytes swap_hash = 1;
+    string prepay_invoice = 2;
+    int64 expiry = 3;
+    bytes sender_pubkey = 4;
+}
+
+message RequestAssetBuyRequest {
+    bytes swap_hash = 1;
+}
+
+message RequestAssetBuyResponse {
+    string swap_invoice = 1;
+    bytes output_proof = 2;
+    bytes output_pkscript = 3;
+}
+
+message RequestMusig2SweepRequest {
+    bytes swap_hash = 1;
+    bytes digest = 2;
+    bytes receiver_nonce = 3;
+}
+
+message RequestMusig2SweepResponse {
+    bytes sender_nonce = 1;
+    bytes sender_sig = 2;
+}

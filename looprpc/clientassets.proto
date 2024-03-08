@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+import "swapserverrpc/common.proto";
+
+package looprpc;
+
+option go_package = "github.com/lightninglabs/loop/looprpc";
+
+service AssetsClient {
+    rpc SwapOut (SwapOutRequest) returns (SwapOutResponse);
+}
+
+message SwapOutRequest {
+    uint64 amt = 1;
+    bytes asset = 2;
+}
+
+message SwapOutResponse {
+}

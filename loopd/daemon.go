@@ -16,6 +16,7 @@ import (
 	proxy "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
+	"github.com/lightninglabs/loop/assets"
 	"github.com/lightninglabs/loop/instantout"
 	"github.com/lightninglabs/loop/loopd/perms"
 	"github.com/lightninglabs/loop/loopdb"
@@ -234,6 +235,8 @@ func (d *Daemon) startWebServers() error {
 		grpc.StreamInterceptor(streamInterceptor),
 	)
 	loop_looprpc.RegisterSwapClientServer(d.grpcServer, d)
+
+	loop_looprpc.RegisterAssetsClientServer(d.grpcServer, d.assetsServer)
 
 	// Register our debug server if it is compiled in.
 	d.registerDebugServer()
@@ -492,6 +495,8 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 	var (
 		reservationManager *reservation.Manager
 		instantOutManager  *instantout.Manager
+		assetManager       *assets.AssetsSwapManager
+		assetClientServer  *assets.AssetsClientServer
 	)
 	// Create the reservation and instantout managers.
 	if d.cfg.EnableExperimental {
@@ -528,6 +533,25 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		instantOutManager = instantout.NewInstantOutManager(
 			instantOutConfig,
 		)
+
+		tapdClient, err := assets.NewTapdClient(
+			d.cfg.TapdConfig,
+		)
+		if err != nil {
+			return err
+		}
+		assetsStore := assets.NewInmemStore()
+		assetsConfig := &assets.Config{
+			Store:         assetsStore,
+			AssetClient:   tapdClient,
+			LndClient:     d.lnd.Client,
+			Router:        d.lnd.Router,
+			ChainNotifier: d.lnd.ChainNotifier,
+			Signer:        d.lnd.Signer,
+			Wallet:        d.lnd.WalletKit,
+		}
+		assetManager = assets.NewAssetSwapServer(assetsConfig)
+		assetClientServer = assets.NewAssetsServer(assetManager)
 	}
 
 	// Now finally fully initialize the swap client RPC server instance.
@@ -543,6 +567,8 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		mainCtx:            d.mainCtx,
 		reservationManager: reservationManager,
 		instantOutManager:  instantOutManager,
+		assetManager:       assetManager,
+		assetsServer:       assetClientServer,
 	}
 
 	// Retrieve all currently existing swaps from the database.
@@ -634,6 +660,10 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 			}
 		}()
 	}
+	getInfo, err := d.lnd.Client.GetInfo(d.mainCtx)
+	if err != nil {
+		return err
+	}
 
 	// Start the instant out manager.
 	if d.instantOutManager != nil {
@@ -641,12 +671,6 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		initChan := make(chan struct{})
 		go func() {
 			defer d.wg.Done()
-
-			getInfo, err := d.lnd.Client.GetInfo(d.mainCtx)
-			if err != nil {
-				d.internalErrChan <- err
-				return
-			}
 
 			log.Info("Starting instantout manager")
 			defer log.Info("Instantout manager stopped")
@@ -670,6 +694,20 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		case <-initChan:
 			cancel()
 		}
+	}
+
+	// Start the asset manager.
+	if d.assetManager != nil {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			log.Infof("Starting asset manager")
+			defer log.Infof("Asset manager stopped")
+			err := d.assetManager.Run(d.mainCtx, int32(getInfo.BlockHeight))
+			if err != nil && !errors.Is(err, context.Canceled) {
+				d.internalErrChan <- err
+			}
+		}()
 	}
 
 	// Last, start our internal error handler. This will return exactly one

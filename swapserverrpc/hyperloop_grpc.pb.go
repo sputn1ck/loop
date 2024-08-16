@@ -18,7 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type HyperloopServerClient interface {
-	GetHyperLoopStatus(ctx context.Context, in *GetHyperLoopStatusRequest, opts ...grpc.CallOption) (*GetHyperLoopStatusResponse, error)
+	HyperloopNotificationStream(ctx context.Context, in *HyperloopNotificationStreamRequest, opts ...grpc.CallOption) (HyperloopServer_HyperloopNotificationStreamClient, error)
 	RegisterHyperloop(ctx context.Context, in *RegisterHyperloopRequest, opts ...grpc.CallOption) (*RegisterHyperloopResponse, error)
 	PushHyperloopHtlcNonce(ctx context.Context, in *PushHyperloopHtlcNonceRequest, opts ...grpc.CallOption) (*PushHyperloopHtlcNonceResponse, error)
 	PushHyperloopHtlcSig(ctx context.Context, in *PushHyperloopHtlcSigRequest, opts ...grpc.CallOption) (*PushHyperloopHtlcSigResponse, error)
@@ -34,13 +34,36 @@ func NewHyperloopServerClient(cc grpc.ClientConnInterface) HyperloopServerClient
 	return &hyperloopServerClient{cc}
 }
 
-func (c *hyperloopServerClient) GetHyperLoopStatus(ctx context.Context, in *GetHyperLoopStatusRequest, opts ...grpc.CallOption) (*GetHyperLoopStatusResponse, error) {
-	out := new(GetHyperLoopStatusResponse)
-	err := c.cc.Invoke(ctx, "/looprpc.HyperloopServer/GetHyperLoopStatus", in, out, opts...)
+func (c *hyperloopServerClient) HyperloopNotificationStream(ctx context.Context, in *HyperloopNotificationStreamRequest, opts ...grpc.CallOption) (HyperloopServer_HyperloopNotificationStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &HyperloopServer_ServiceDesc.Streams[0], "/looprpc.HyperloopServer/HyperloopNotificationStream", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &hyperloopServerHyperloopNotificationStreamClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type HyperloopServer_HyperloopNotificationStreamClient interface {
+	Recv() (*HyperloopNotificationStreamResponse, error)
+	grpc.ClientStream
+}
+
+type hyperloopServerHyperloopNotificationStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *hyperloopServerHyperloopNotificationStreamClient) Recv() (*HyperloopNotificationStreamResponse, error) {
+	m := new(HyperloopNotificationStreamResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (c *hyperloopServerClient) RegisterHyperloop(ctx context.Context, in *RegisterHyperloopRequest, opts ...grpc.CallOption) (*RegisterHyperloopResponse, error) {
@@ -92,7 +115,7 @@ func (c *hyperloopServerClient) PushHyperloopSweeplessSweepSig(ctx context.Conte
 // All implementations must embed UnimplementedHyperloopServerServer
 // for forward compatibility
 type HyperloopServerServer interface {
-	GetHyperLoopStatus(context.Context, *GetHyperLoopStatusRequest) (*GetHyperLoopStatusResponse, error)
+	HyperloopNotificationStream(*HyperloopNotificationStreamRequest, HyperloopServer_HyperloopNotificationStreamServer) error
 	RegisterHyperloop(context.Context, *RegisterHyperloopRequest) (*RegisterHyperloopResponse, error)
 	PushHyperloopHtlcNonce(context.Context, *PushHyperloopHtlcNonceRequest) (*PushHyperloopHtlcNonceResponse, error)
 	PushHyperloopHtlcSig(context.Context, *PushHyperloopHtlcSigRequest) (*PushHyperloopHtlcSigResponse, error)
@@ -105,8 +128,8 @@ type HyperloopServerServer interface {
 type UnimplementedHyperloopServerServer struct {
 }
 
-func (UnimplementedHyperloopServerServer) GetHyperLoopStatus(context.Context, *GetHyperLoopStatusRequest) (*GetHyperLoopStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetHyperLoopStatus not implemented")
+func (UnimplementedHyperloopServerServer) HyperloopNotificationStream(*HyperloopNotificationStreamRequest, HyperloopServer_HyperloopNotificationStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method HyperloopNotificationStream not implemented")
 }
 func (UnimplementedHyperloopServerServer) RegisterHyperloop(context.Context, *RegisterHyperloopRequest) (*RegisterHyperloopResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterHyperloop not implemented")
@@ -136,22 +159,25 @@ func RegisterHyperloopServerServer(s grpc.ServiceRegistrar, srv HyperloopServerS
 	s.RegisterService(&HyperloopServer_ServiceDesc, srv)
 }
 
-func _HyperloopServer_GetHyperLoopStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetHyperLoopStatusRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _HyperloopServer_HyperloopNotificationStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(HyperloopNotificationStreamRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(HyperloopServerServer).GetHyperLoopStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/looprpc.HyperloopServer/GetHyperLoopStatus",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HyperloopServerServer).GetHyperLoopStatus(ctx, req.(*GetHyperLoopStatusRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(HyperloopServerServer).HyperloopNotificationStream(m, &hyperloopServerHyperloopNotificationStreamServer{stream})
+}
+
+type HyperloopServer_HyperloopNotificationStreamServer interface {
+	Send(*HyperloopNotificationStreamResponse) error
+	grpc.ServerStream
+}
+
+type hyperloopServerHyperloopNotificationStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *hyperloopServerHyperloopNotificationStreamServer) Send(m *HyperloopNotificationStreamResponse) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 func _HyperloopServer_RegisterHyperloop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -252,10 +278,6 @@ var HyperloopServer_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*HyperloopServerServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetHyperLoopStatus",
-			Handler:    _HyperloopServer_GetHyperLoopStatus_Handler,
-		},
-		{
 			MethodName: "RegisterHyperloop",
 			Handler:    _HyperloopServer_RegisterHyperloop_Handler,
 		},
@@ -276,6 +298,12 @@ var HyperloopServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HyperloopServer_PushHyperloopSweeplessSweepSig_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "HyperloopNotificationStream",
+			Handler:       _HyperloopServer_HyperloopNotificationStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "hyperloop.proto",
 }

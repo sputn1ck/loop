@@ -151,9 +151,19 @@ func (h *HyperLoop) String() string {
 }
 
 type HyperLoopParticipant struct {
-	SwapHash lntypes.Hash
-	Amt      btcutil.Amount
-	Pubkey   *btcec.PublicKey
+	SwapHash     lntypes.Hash
+	Amt          btcutil.Amount
+	Pubkey       *btcec.PublicKey
+	SweepAddress btcutil.Address
+}
+
+// addParticipant adds a participant to the hyperloop and adds the sweep address
+// to the sweepless sweep address map.
+func (h *HyperLoop) registerParticipants(participants []*HyperLoopParticipant) {
+	h.Participants = participants
+	for _, p := range participants {
+		h.sweeplessSweepAddrMap[p.SwapHash] = p.SweepAddress
+	}
 }
 
 // startHtlcSession starts the musig2 session for the htlc tx.

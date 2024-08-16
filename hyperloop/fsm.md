@@ -9,13 +9,13 @@ PubslishSweep
 PubslishSweep --> WaitForSweepConfirmation: OnSweeplessSweepPublish
 PubslishSweep --> Failed: OnError
 PushHtlcNonce
+PushHtlcNonce --> WaitForReadyForHtlcSig: OnPushedHtlcNonce
 PushHtlcNonce --> Failed: OnError
-PushHtlcNonce --> PushHtlcSig: OnPushedHtlcNonce
 PushHtlcSig
 PushHtlcSig --> WaitForHtlcSig: OnPushedHtlcSig
 PushHtlcSig --> Failed: OnError
 PushPreimage
-PushPreimage --> PushSweeplessSweepSig: OnPushedPreimage
+PushPreimage --> WaitForReadyForSweeplessSweepSig: OnPushedPreimage
 PushPreimage --> Failed: OnError
 PushSweeplessSweepSig
 PushSweeplessSweepSig --> PubslishSweep: OnPushedSweeplessSweepSig

@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop/fsm"
+	"github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 )
 
@@ -217,6 +219,17 @@ type FSM struct {
 	// spendSubOnce is used to ensure that we only subscribe to the spend
 	// notification once.
 	spendSubOnce *sync.Once
+
+	// isConnectedToNotificationStream is true if we are connected to the
+	// notification stream.
+	isConnectedToNotificationStream bool
+
+	// isConnectedMutex is used to ensure that we safely access the
+	// isConnectedToNotificationStream variable.
+	isConnectedMutex sync.Mutex
+
+	// lastNotification is the last notification that we received.
+	lastNotification *swapserverrpc.HyperloopNotificationStreamResponse
 }
 
 // NewFSM creates a new instant out FSM.
@@ -285,7 +298,7 @@ func (f *FSM) GetStateMap() fsm.States {
 		},
 		PushHtlcNonce: fsm.State{
 			Transitions: fsm.Transitions{
-				OnPushedHtlcNonce: PushHtlcSig,
+				OnPushedHtlcNonce: WaitForReadyForHtlcSig,
 				fsm.OnError:       Failed,
 			},
 			Action: f.pushHtlcNonceAction,
@@ -313,7 +326,7 @@ func (f *FSM) GetStateMap() fsm.States {
 		},
 		PushPreimage: fsm.State{
 			Transitions: fsm.Transitions{
-				OnPushedPreimage: PushSweeplessSweepSig,
+				OnPushedPreimage: WaitForReadyForSweeplessSweepSig,
 				fsm.OnError:      Failed,
 			},
 			Action: f.pushPreimageAction,
@@ -381,6 +394,9 @@ func (r *FSM) updateHyperloop(notification fsm.Notification) {
 		return
 	}
 
+	// Subscribe to the hyperloop notifications.
+	r.subscribeHyperloopNotifications()
+
 	// Subscribe to the spend notification of the current outpoint.
 	err := r.subscribeHyperloopOutpointSpend()
 	if err != nil {
@@ -428,6 +444,63 @@ func (f *FSM) subscribeHyperloopOutpointSpend() error {
 			}
 		}()
 	})
+
+	return nil
+}
+
+func (f *FSM) subscribeHyperloopNotifications() error {
+	f.isConnectedMutex.Lock()
+	defer f.isConnectedMutex.Unlock()
+	if f.isConnectedToNotificationStream {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(f.ctx)
+
+	// Subscribe to the notification stream.
+	client, err := f.cfg.HyperloopClient.HyperloopNotificationStream(
+		ctx, &swapserverrpc.HyperloopNotificationStreamRequest{
+			HyperloopId: f.hyperloop.ID[:],
+		},
+	)
+	if err != nil {
+		f.Errorf("unable to subscribe to hyperloop notifications: %v", err)
+		return err
+	}
+	f.Debugf("subscribed to hyperloop notifications")
+
+	f.isConnectedToNotificationStream = true
+	go func() {
+		for {
+			notification, err := client.Recv()
+			if err == nil && notification != nil {
+				f.lastNotification = notification
+				continue
+			}
+			f.Errorf("error receiving hyperloop notification: %v", err)
+			cancel()
+			f.isConnectedMutex.Lock()
+			f.isConnectedToNotificationStream = false
+			f.isConnectedMutex.Unlock()
+
+			// If we encounter an error, we'll try to reconnect.
+			for {
+				select {
+				case <-f.ctx.Done():
+					return
+
+				case <-time.After(time.Second * 10):
+					f.Debugf("reconnecting to hyperloop notifications")
+					err = f.subscribeHyperloopNotifications()
+					if err != nil {
+						f.Errorf("error reconnecting: %v", err)
+						continue
+					}
+					return
+				}
+			}
+		}
+	}()
 
 	return nil
 }

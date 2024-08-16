@@ -10,6 +10,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop/fsm"
@@ -116,39 +117,31 @@ func (f *FSM) registerHyperloopAction(eventCtx fsm.EventContext) fsm.EventType {
 
 	// Poll the server to check if we're registered.
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second * 5):
-				// Check if we're registered.
-				serverHyperloop, err := f.cfg.HyperloopClient.GetHyperLoopStatus(
-					ctx, &looprpc.GetHyperLoopStatusRequest{
-						HyperloopId: f.hyperloop.ID[:],
-						SwapHash:    f.hyperloop.SwapHash[:],
-					},
-				)
-				if err != nil {
-					cancel()
-					f.handleAsyncError(err)
-					return
-				}
-				if serverHyperloop.HtlcRegistered {
-					cancel()
-					err := f.SendEvent(OnRegistered, nil)
-					if err != nil {
-						log.Errorf("Error sending event: %v", err)
-						continue
-					}
-					return
-				}
-				// If the hyperloop is not in the pending state, we can
-				// stop polling.
-				if serverHyperloop.Status != looprpc.GetHyperLoopStatusResponse_PENDING {
-					f.handleAsyncError(errors.New("was not able to register hyperloop"))
-					return
+		checkFunc := func(res *looprpc.HyperloopNotificationStreamResponse) (
+			bool, error) {
+			for _, participant := range res.Participants {
+				if bytes.Equal(participant.SwapHash,
+					f.hyperloop.SwapHash[:]) {
+					return true, nil
 				}
 			}
+
+			if res.HyperloopTxid != "" {
+				return false, errors.New("registration failed")
+			}
+
+			return false, nil
+		}
+		_, err := f.waitForState(ctx, checkFunc)
+		if err != nil {
+			f.handleAsyncError(err)
+			return
+		}
+
+		err = f.SendEvent(OnRegistered, nil)
+		if err != nil {
+			f.handleAsyncError(err)
+			return
 		}
 	}()
 
@@ -188,22 +181,28 @@ func (f *FSM) registerHyperloopAction(eventCtx fsm.EventContext) fsm.EventType {
 // published.
 func (f *FSM) waitForPublishAction(_ fsm.EventContext) fsm.EventType {
 	go func() {
-		res, err := f.waitForState(
-			f.ctx, looprpc.GetHyperLoopStatusResponse_PUBLISHED,
-		)
+		checkFunc := func(res *looprpc.HyperloopNotificationStreamResponse) (
+			bool, error) {
+			if res.HyperloopTxid != "" {
+				return true, nil
+			}
+
+			return false, nil
+		}
+		res, err := f.waitForState(f.ctx, checkFunc)
 		if err != nil {
 			f.handleAsyncError(err)
 		}
 
 		// If we're published, the list of participants is final.
 		participants, err := rpcParticipantToHyperloopParticipant(
-			res.Participants,
+			res.Participants, f.cfg.ChainParams,
 		)
 		if err != nil {
 			f.handleAsyncError(err)
 			return
 		}
-		f.hyperloop.Participants = participants
+		f.hyperloop.registerParticipants(participants)
 
 		err = f.SendEvent(OnPublished, nil)
 		if err != nil {
@@ -224,7 +223,7 @@ func (f *FSM) waitForConfirmationAction(_ fsm.EventContext) fsm.EventType {
 	}
 
 	subChan, errChan, err := f.cfg.ChainNotifier.RegisterConfirmationsNtfn(
-		f.ctx, nil, pkScript, 2, 100,
+		f.ctx, nil, pkScript, 2, 100, //todo height hint
 	)
 	if err != nil {
 		return f.HandleError(err)
@@ -287,36 +286,24 @@ func (f *FSM) pushHtlcNonceAction(_ fsm.EventContext) fsm.EventType {
 // ready for the htlc sign.
 func (f *FSM) waitForReadyForHtlcSignAction(_ fsm.EventContext) fsm.EventType {
 	go func() {
-		res, err := f.waitForState(
-			f.ctx, looprpc.GetHyperLoopStatusResponse_WAIT_FOR_HTLC_SIGS,
-		)
+		checkFunc := func(res *looprpc.HyperloopNotificationStreamResponse) (
+			bool, error) {
+			// If the length of htlc nonces is equal to the
+			// number of participants, we're ready to sign.
+			return len(res.Participants) == len(res.HtlcNonces), nil
+		}
+		res, err := f.waitForState(f.ctx, checkFunc)
 		if err != nil {
 			f.handleAsyncError(err)
 			return
 		}
 
 		var nonces [][66]byte
-		for _, p := range res.Participants {
-			p := p
-			// first we set the sweep pk script.
-			swapHash, err := lntypes.MakeHash(p.SwapHash)
-			if err != nil {
-				f.handleAsyncError(err)
-				return
-			}
-
-			sweepAddr, err := btcutil.DecodeAddress(
-				p.SweepAddr, f.cfg.ChainParams,
-			)
-			if err != nil {
-				f.handleAsyncError(err)
-				return
-			}
-
-			f.hyperloop.sweeplessSweepAddrMap[swapHash] = sweepAddr
+		for _, htlcNonce := range res.HtlcNonces {
+			htlcNonce := htlcNonce
 
 			var nonce [66]byte
-			copy(nonce[:], p.HtlcNonce)
+			copy(nonce[:], htlcNonce)
 			nonces = append(nonces, nonce)
 		}
 
@@ -368,9 +355,11 @@ func (f *FSM) pushHtlcSigAction(_ fsm.EventContext) fsm.EventType {
 // waitForHtlcSig is the action where we poll the server for the htlc signature.
 func (f *FSM) waitForHtlcSig(_ fsm.EventContext) fsm.EventType {
 	go func() {
-		res, err := f.waitForState(
-			f.ctx, looprpc.GetHyperLoopStatusResponse_WAIT_FOR_PREIMAGES,
-		)
+		checkFunc := func(res *looprpc.HyperloopNotificationStreamResponse) (
+			bool, error) {
+			return res.FinalHtlcSig != nil, nil
+		}
+		res, err := f.waitForState(f.ctx, checkFunc)
 		if err != nil {
 			f.handleAsyncError(err)
 			return
@@ -403,7 +392,6 @@ func (f *FSM) pushPreimageAction(_ fsm.EventContext) fsm.EventType {
 		f.ctx, &looprpc.PushHyperloopPreimageRequest{
 			HyperloopId: f.hyperloop.ID[:],
 			Preimage:    f.hyperloop.SwapPreimage[:],
-			SweepAddr:   f.hyperloop.SweepAddr.String(),
 			SweepNonce:  f.hyperloop.SweeplessSweepMusig2Session.PublicNonce[:],
 		},
 	)
@@ -421,20 +409,22 @@ func (f *FSM) pushPreimageAction(_ fsm.EventContext) fsm.EventType {
 // ready for the sweep.
 func (f *FSM) waitForReadyForSweepAction(_ fsm.EventContext) fsm.EventType {
 	go func() {
-		res, err := f.waitForState(
-			f.ctx, looprpc.GetHyperLoopStatusResponse_WAIT_FOR_SWEEPLESS_SWEEP_SIGS,
-		)
+		checkFunc := func(res *looprpc.HyperloopNotificationStreamResponse) (
+			bool, error) {
+			return len(res.Participants) == len(res.SweeplessSweepNonces), nil
+		}
+		res, err := f.waitForState(f.ctx, checkFunc)
 		if err != nil {
 			f.handleAsyncError(err)
 			return
 		}
 
 		var nonces [][66]byte
-		for _, p := range res.Participants {
-			p := p
+		for _, sweepNonce := range res.SweeplessSweepNonces {
+			sweepNonce := sweepNonce
 
 			var nonce [66]byte
-			copy(nonce[:], p.SweepNonce)
+			copy(nonce[:], sweepNonce)
 			nonces = append(nonces, nonce)
 		}
 
@@ -528,8 +518,8 @@ func (f *FSM) waitForSweeplessSweepConfirmationAction(_ fsm.EventContext,
 // status matches the expected status. Once the status matches, it returns the
 // response.
 func (f *FSM) waitForState(ctx context.Context,
-	status looprpc.GetHyperLoopStatusResponse_HyperLoopStatus) (
-	*looprpc.GetHyperLoopStatusResponse, error) {
+	checkFunc func(*looprpc.HyperloopNotificationStreamResponse) (bool, error),
+) (*looprpc.HyperloopNotificationStreamResponse, error) {
 
 	// Create a context which we can cancel if we're published.
 	ctx, cancel := context.WithCancel(f.ctx)
@@ -540,18 +530,16 @@ func (f *FSM) waitForState(ctx context.Context,
 		case <-ctx.Done():
 			return nil, errors.New("context canceled")
 		case <-time.After(time.Second * 5):
-			// Check if we're published.
-			serverHyperloop, err := f.cfg.HyperloopClient.GetHyperLoopStatus(
-				ctx, &looprpc.GetHyperLoopStatusRequest{
-					HyperloopId: f.hyperloop.ID[:],
-					SwapHash:    f.hyperloop.SwapHash[:],
-				},
-			)
+			if f.lastNotification == nil {
+				continue
+			}
+
+			status, err := checkFunc(f.lastNotification)
 			if err != nil {
 				return nil, err
 			}
-			if serverHyperloop.Status == status {
-				return serverHyperloop, nil
+			if status {
+				return f.lastNotification, nil
 			}
 		}
 	}
@@ -589,7 +577,7 @@ func getOutpointFromTx(tx *wire.MsgTx, pkScript []byte) (*wire.OutPoint,
 // rpcParticipantToHyperloopParticipant converts a slice of rpc participants to
 // to a slice of hyperloop participants.
 func rpcParticipantToHyperloopParticipant(rpcParticipant []*looprpc.
-	HyperLoopParticipant) ([]*HyperLoopParticipant, error) {
+	HyperLoopParticipant, params *chaincfg.Params) ([]*HyperLoopParticipant, error) {
 
 	participants := make([]*HyperLoopParticipant, 0, len(rpcParticipant))
 	for _, p := range rpcParticipant {
@@ -604,10 +592,16 @@ func rpcParticipantToHyperloopParticipant(rpcParticipant []*looprpc.
 			return nil, err
 		}
 
+		sweepAddr, err := btcutil.DecodeAddress(p.SweepAddr, params)
+		if err != nil {
+			return nil, err
+		}
+
 		participants = append(participants, &HyperLoopParticipant{
-			SwapHash: swapHash,
-			Amt:      btcutil.Amount(p.Amt),
-			Pubkey:   pubkey,
+			SwapHash:     swapHash,
+			Amt:          btcutil.Amount(p.Amt),
+			Pubkey:       pubkey,
+			SweepAddress: sweepAddr,
 		})
 	}
 

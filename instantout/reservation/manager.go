@@ -22,8 +22,6 @@ type Manager struct {
 	// activeReservations contains all the active reservationsFSMs.
 	activeReservations map[ID]*FSM
 
-	runCtx context.Context
-
 	sync.Mutex
 }
 
@@ -44,7 +42,6 @@ func (m *Manager) Run(ctx context.Context, height int32,
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	m.runCtx = runCtx
 	currentHeight := height
 
 	err := m.RecoverReservations(runCtx)
@@ -132,7 +129,7 @@ func (m *Manager) newReservation(ctx context.Context, currentHeight uint32,
 
 	// Send the init event to the state machine.
 	go func() {
-		err = reservationFSM.SendEvent(m.runCtx, OnServerRequest, initContext)
+		err = reservationFSM.SendEvent(ctx, OnServerRequest, initContext)
 		if err != nil {
 			log.Errorf("Error sending init event: %v", err)
 		}

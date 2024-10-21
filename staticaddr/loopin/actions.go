@@ -53,16 +53,12 @@ var (
 
 // InitHtlcAction is executed if all loop-in information has been validated. We
 // assemble a loop-in request and send it to the server.
-func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+func (f *FSM) InitHtlcAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	// Lock the deposits and transition them to the LoopingIn state.
 	err := f.cfg.DepositManager.TransitionDeposits(
-		eventCtx.ctx, f.loopIn.Deposits, deposit.OnLoopinInitiated,
+		ctx, f.loopIn.Deposits, deposit.OnLoopinInitiated,
 		deposit.LoopingIn,
 	)
 	if err != nil {
@@ -89,7 +85,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 
 	// Derive a client key for the HTLC.
 	keyDesc, err := f.cfg.WalletKit.DeriveNextKey(
-		eventCtx.ctx, swap.StaticAddressKeyFamily,
+		ctx, swap.StaticAddressKeyFamily,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to derive client htlc key: %w", err)
@@ -101,7 +97,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 
 	// Create the swap invoice in lnd.
 	_, swapInvoice, err := f.cfg.LndClient.AddInvoice(
-		eventCtx.ctx, &invoicesrpc.AddInvoiceData{
+		ctx, &invoicesrpc.AddInvoiceData{
 			Preimage:   &swapPreimage,
 			Value:      lnwire.NewMSatFromSatoshis(swapInvoiceAmt),
 			Memo:       "static address loop-in",
@@ -134,7 +130,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 	}
 
 	loopInResp, err := f.cfg.Server.ServerStaticAddressLoopIn(
-		eventCtx.ctx, loopInReq,
+		ctx, loopInReq,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to initiate the loop-in withe the "+
@@ -188,7 +184,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 	// a configured percentage of the swap value to be spent on fees.
 	pushEmptySigs := func() {
 		_, err = f.cfg.Server.PushStaticAddressHtlcSigs(
-			eventCtx.ctx,
+			ctx,
 			&looprpc.PushStaticAddressHtlcSigsRequest{
 				SwapHash: f.loopIn.SwapHash[:],
 			},
@@ -250,7 +246,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 
 	// Derive the sweep address for the htlc timeout sweep tx.
 	sweepAddress, err := f.cfg.WalletKit.NextAddr(
-		eventCtx.ctx, lnwallet.DefaultAccountName,
+		ctx, lnwallet.DefaultAccountName,
 		walletrpc.AddressType_TAPROOT_PUBKEY, false,
 	)
 	if err != nil {
@@ -262,7 +258,7 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 	f.loopIn.HtlcTimeoutSweepAddress = sweepAddress
 
 	// Once the htlc tx is initiated, we store the loop-in in the database.
-	err = f.cfg.Store.CreateLoopIn(eventCtx.ctx, f.loopIn)
+	err = f.cfg.Store.CreateLoopIn(ctx, f.loopIn)
 	if err != nil {
 		err = fmt.Errorf("unable to store loop-in in db: %w", err)
 
@@ -275,17 +271,13 @@ func (f *FSM) InitHtlcAction(eCtx fsm.EventContext) fsm.EventType {
 // SignHtlcTxAction is called if the htlc was initialized and the server
 // provided the necessary information to construct the htlc tx. We sign the htlc
 // tx and send the signatures to the server.
-func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+func (f *FSM) SignHtlcTxAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	var err error
 
 	f.loopIn.AddressParams, err = f.cfg.AddressManager.GetStaticAddressParameters( //nolint:lll
-		eventCtx.ctx,
+		ctx,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to get static address parameters: "+
@@ -295,7 +287,7 @@ func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
 	}
 
 	f.loopIn.Address, err = f.cfg.AddressManager.GetStaticAddress(
-		eventCtx.ctx,
+		ctx,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to get static address: %w", err)
@@ -306,30 +298,30 @@ func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
 	// rates.
 	createSession := f.loopIn.createMusig2Sessions
 	htlcSessions, clientHtlcNonces, err := createSession(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to create musig2 sessions: %w", err)
 		return f.HandleError(err)
 	}
-	defer f.cleanUpSessions(eventCtx.ctx, htlcSessions)
+	defer f.cleanUpSessions(ctx, htlcSessions)
 
 	htlcSessionsHighFee, highFeeNonces, err := createSession(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		return f.HandleError(err)
 	}
-	defer f.cleanUpSessions(eventCtx.ctx, htlcSessionsHighFee)
+	defer f.cleanUpSessions(ctx, htlcSessionsHighFee)
 
 	htlcSessionsExtremelyHighFee, extremelyHighNonces, err := createSession(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to convert nonces: %w", err)
 		return f.HandleError(err)
 	}
-	defer f.cleanUpSessions(eventCtx.ctx, htlcSessionsExtremelyHighFee)
+	defer f.cleanUpSessions(ctx, htlcSessionsExtremelyHighFee)
 
 	// Create the htlc txns for different fee rates.
 	htlcTx, err := f.loopIn.createHtlcTx(
@@ -357,7 +349,7 @@ func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
 
 	// Next we'll get our htlc tx signatures for different fee rates.
 	htlcSigs, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, htlcTx, f.cfg.Signer, htlcSessions, f.htlcServerNonces,
+		ctx, htlcTx, f.cfg.Signer, htlcSessions, f.htlcServerNonces,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to sign htlc tx: %w", err)
@@ -365,14 +357,14 @@ func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
 	}
 
 	htlcSigsHighFee, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, htlcTxHighFee, f.cfg.Signer, htlcSessionsHighFee,
+		ctx, htlcTxHighFee, f.cfg.Signer, htlcSessionsHighFee,
 		f.htlcServerNoncesHighFee,
 	)
 	if err != nil {
 		return f.HandleError(err)
 	}
 	htlcSigsExtremelyHighFee, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, htlcTxExtremelyHighFee, f.cfg.Signer,
+		ctx, htlcTxExtremelyHighFee, f.cfg.Signer,
 		htlcSessionsExtremelyHighFee, f.htlcServerNoncesExtremelyHighFee,
 	)
 	if err != nil {
@@ -396,7 +388,7 @@ func (f *FSM) SignHtlcTxAction(eCtx fsm.EventContext) fsm.EventType {
 		},
 	}
 	_, err = f.cfg.Server.PushStaticAddressHtlcSigs(
-		eventCtx.ctx, pushHtlcReq,
+		ctx, pushHtlcReq,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to push htlc tx sigs to server: %w",
@@ -432,12 +424,8 @@ func (f *FSM) cleanUpSessions(ctx context.Context,
 // the htlc timeout, our invoice gets paid, the swap is considered successful,
 // and we can stop monitoring the htlc confirmation and continue to sign the
 // sweepless sweep.
-func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eC.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eC))
-	}
+func (f *FSM) MonitorInvoiceAndHtlcTxAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	// Subscribe to the state of the swap invoice. If upon restart recovery,
 	// we land here and observe that the invoice is already canceled, it can
@@ -448,7 +436,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 	// paying the invoice.
 	invoiceUpdateChan, _, err :=
 		f.cfg.InvoicesClient.SubscribeSingleInvoice(
-			eventCtx.ctx, f.loopIn.SwapHash,
+			ctx, f.loopIn.SwapHash,
 		)
 	if err != nil {
 		err = fmt.Errorf("unable to subscribe to swap "+
@@ -470,7 +458,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 		error) {
 
 		return f.cfg.ChainNotifier.RegisterConfirmationsNtfn(
-			eventCtx.ctx, nil, htlc.PkScript, defaultConfTarget,
+			ctx, nil, htlc.PkScript, defaultConfTarget,
 			int32(f.loopIn.InitiationHeight),
 			lndclient.WithReOrgChan(reorgChan),
 		)
@@ -486,7 +474,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 
 	// Subscribe to new blocks.
 	registerBlocks := f.cfg.ChainNotifier.RegisterBlockEpochNtfn
-	blockChan, blockChanErr, err := registerBlocks(eventCtx.ctx)
+	blockChan, blockChanErr, err := registerBlocks(ctx)
 	if err != nil {
 		err = fmt.Errorf("unable to subscribe to new blocks: %w", err)
 
@@ -505,7 +493,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 			"paid, canceling invoice")
 
 		err = f.cfg.InvoicesClient.CancelInvoice(
-			eventCtx.ctx, f.loopIn.SwapHash,
+			ctx, f.loopIn.SwapHash,
 		)
 		if err != nil {
 			f.Warnf("unable to cancel invoice "+
@@ -542,9 +530,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 			// re-enable them for loop-ins and withdrawals.
 			cancelInvoice()
 
-			event := f.UnlockDepositsAction(EventContext{
-				ctx: eventCtx.ctx,
-			})
+			event := f.UnlockDepositsAction(ctx, nil)
 			if event != fsm.OnError {
 				f.Errorf("unable to unlock deposits")
 			}
@@ -584,7 +570,7 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 			// If the htlc has confirmed and the timeout path has
 			// opened up we sweep the funds back to us.
 			err = f.cfg.DepositManager.TransitionDeposits(
-				eventCtx.ctx, f.loopIn.Deposits,
+				ctx, f.loopIn.Deposits,
 				deposit.OnSweepingHtlcTimeout,
 				deposit.SweepHtlcTimeout,
 			)
@@ -626,8 +612,8 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 				return f.HandleError(err)
 			}
 
-		case <-eventCtx.ctx.Done():
-			return f.HandleError(eventCtx.ctx.Err())
+		case <-ctx.Done():
+			return f.HandleError(ctx.Err())
 		}
 	}
 }
@@ -635,15 +621,11 @@ func (f *FSM) MonitorInvoiceAndHtlcTxAction(eC fsm.EventContext) fsm.EventType {
 // SweepHtlcTimeoutAction is called if the server published the htlc tx without
 // paying the invoice. We wait for the timeout path to open up and sweep the
 // funds back to us.
-func (f *FSM) SweepHtlcTimeoutAction(eCtx fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+func (f *FSM) SweepHtlcTimeoutAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	for {
-		err := f.createAndPublishHtlcTimeoutSweepTx(eventCtx.ctx)
+		err := f.createAndPublishHtlcTimeoutSweepTx(ctx)
 		if err == nil {
 			break
 		}
@@ -652,8 +634,8 @@ func (f *FSM) SweepHtlcTimeoutAction(eCtx fsm.EventContext) fsm.EventType {
 			"tx: %v, retrying in  %v", err, time.Hour.String())
 
 		select {
-		case <-eventCtx.ctx.Done():
-			f.Errorf(eventCtx.ctx.Err().Error())
+		case <-ctx.Done():
+			f.Errorf(ctx.Err().Error())
 
 		default:
 			<-time.After(1 * time.Hour)
@@ -666,12 +648,8 @@ func (f *FSM) SweepHtlcTimeoutAction(eCtx fsm.EventContext) fsm.EventType {
 // MonitorHtlcTimeoutSweepAction is called after the htlc timeout sweep tx has
 // been published. We monitor the confirmation of the htlc timeout sweep tx and
 // finalize the deposits once swept.
-func (f *FSM) MonitorHtlcTimeoutSweepAction(eC fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eC.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eC))
-	}
+func (f *FSM) MonitorHtlcTimeoutSweepAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	f.Infof("monitoring htlc timeout sweep tx %v",
 		f.loopIn.HtlcTimeoutSweepTxHash)
@@ -687,7 +665,7 @@ func (f *FSM) MonitorHtlcTimeoutSweepAction(eC fsm.EventContext) fsm.EventType {
 	}
 
 	htlcTimeoutTxidChan, errChan, err := f.cfg.ChainNotifier.RegisterConfirmationsNtfn( //nolint:lll
-		eventCtx.ctx, f.loopIn.HtlcTimeoutSweepTxHash,
+		ctx, f.loopIn.HtlcTimeoutSweepTxHash,
 		timeoutSweepPkScript, defaultConfTarget,
 		int32(f.loopIn.InitiationHeight),
 	)
@@ -705,7 +683,7 @@ func (f *FSM) MonitorHtlcTimeoutSweepAction(eC fsm.EventContext) fsm.EventType {
 
 		case conf := <-htlcTimeoutTxidChan:
 			err = f.cfg.DepositManager.TransitionDeposits(
-				eventCtx.ctx, f.loopIn.Deposits,
+				ctx, f.loopIn.Deposits,
 				deposit.OnHtlcTimeoutSwept,
 				deposit.HtlcTimeoutSwept,
 			)
@@ -722,24 +700,20 @@ func (f *FSM) MonitorHtlcTimeoutSweepAction(eC fsm.EventContext) fsm.EventType {
 
 			return OnHtlcTimeoutSwept
 
-		case <-eventCtx.ctx.Done():
-			return f.HandleError(eventCtx.ctx.Err())
+		case <-ctx.Done():
+			return f.HandleError(ctx.Err())
 		}
 	}
 }
 
 // PaymentReceivedAction is called if the invoice was settled. We finalize the
 // deposits by transitioning them to the LoopedIn state.
-func (f *FSM) PaymentReceivedAction(eCtx fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+func (f *FSM) PaymentReceivedAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
 
 	// Unlock the deposits and transition them to the LoopedIn state.
 	err := f.cfg.DepositManager.TransitionDeposits(
-		eventCtx.ctx, f.loopIn.Deposits, deposit.OnLoopedIn, deposit.LoopedIn,
+		ctx, f.loopIn.Deposits, deposit.OnLoopedIn, deposit.LoopedIn,
 	)
 	if err != nil {
 		err = fmt.Errorf("payment received, but unable to transition "+
@@ -756,20 +730,14 @@ func (f *FSM) PaymentReceivedAction(eCtx fsm.EventContext) fsm.EventType {
 // sweep transaction and signs it with the server and client nonces. If signing
 // succeeds it pushes the signatures to the server.
 func (f *FSM) FetchSignPushSweeplessSweepTxAction(
-	eCtx fsm.EventContext) fsm.EventType {
-
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+	ctx context.Context, _ fsm.EventContext) fsm.EventType {
 
 	// Fetch the sweepless sweep tx details from server.
 	fetchReq := &looprpc.FetchSweeplessSweepTxRequest{
 		SwapHash: f.loopIn.SwapHash[:],
 	}
 	fetchResp, err := f.cfg.Server.FetchSweeplessSweepTx(
-		eventCtx.ctx, fetchReq,
+		ctx, fetchReq,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to fetch sweepless sweep tx: %w", err)
@@ -817,7 +785,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// Standard sessions.
 	sessions, nonces, err := f.loopIn.createMusig2Sessions(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		return f.HandleError(err)
@@ -829,7 +797,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// High fee sessions.
 	highFeeSessions, highFeeClientNonces, err := f.loopIn.createMusig2Sessions(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		return f.HandleError(err)
@@ -841,7 +809,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// Extremely high sessions.
 	extremeSessions, extremeClientNonces, err := f.loopIn.createMusig2Sessions(
-		eventCtx.ctx, f.cfg.Signer,
+		ctx, f.cfg.Signer,
 	)
 	if err != nil {
 		return f.HandleError(err)
@@ -882,7 +850,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// Sign standard.
 	sweeplessClientSigs, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, sweepTx, f.cfg.Signer, sessions, serverNonces,
+		ctx, sweepTx, f.cfg.Signer, sessions, serverNonces,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to sign sweepless sweep tx: %w", err)
@@ -891,7 +859,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// Sign high fee.
 	highFeeSigs, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, highFeeSweepTx, f.cfg.Signer, highFeeSessions,
+		ctx, highFeeSweepTx, f.cfg.Signer, highFeeSessions,
 		serverHighFeeNonces,
 	)
 	if err != nil {
@@ -903,7 +871,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 	// Sign extremely high fee.
 	extremelyHighSigs, err := f.loopIn.signMusig2Tx(
-		eventCtx.ctx, extremelyHighFeeSweepTx, f.cfg.Signer, extremeSessions,
+		ctx, extremelyHighFeeSweepTx, f.cfg.Signer, extremeSessions,
 		serverExtremeNonces,
 	)
 	if err != nil {
@@ -929,7 +897,7 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 			Sigs:   extremelyHighSigs,
 		},
 	}
-	_, err = f.cfg.Server.PushStaticAddressSweeplessSigs(eventCtx.ctx, req)
+	_, err = f.cfg.Server.PushStaticAddressSweeplessSigs(ctx, req)
 	if err != nil {
 		err = fmt.Errorf("unable to push sweepless sweep sigs: %w", err)
 		return f.HandleError(err)
@@ -940,14 +908,11 @@ func (f *FSM) FetchSignPushSweeplessSweepTxAction(
 
 // UnlockDepositsAction is called if the loop-in failed and its deposits should
 // be available in a future loop-in request.
-func (f *FSM) UnlockDepositsAction(eCtx fsm.EventContext) fsm.EventType {
-	eventCtx, ok := eCtx.(EventContext)
-	if !ok {
-		return f.HandleError(fmt.Errorf("unexpected context type %T",
-			eCtx))
-	}
+func (f *FSM) UnlockDepositsAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
+
 	err := f.cfg.DepositManager.TransitionDeposits(
-		eventCtx.ctx, f.loopIn.Deposits, fsm.OnError, deposit.Deposited,
+		ctx, f.loopIn.Deposits, fsm.OnError, deposit.Deposited,
 	)
 	if err != nil {
 		err = fmt.Errorf("unable to unlock deposits: %w", err)

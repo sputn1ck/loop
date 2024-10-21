@@ -219,9 +219,7 @@ func (m *Manager) recoverLoopIns(ctx context.Context) error {
 		// Send the OnRecover event to the state machine.
 		swapHash := loopIn.SwapHash
 		go func() {
-			err = fsm.SendEvent(OnRecover, EventContext{
-				ctx: ctx,
-			})
+			err = fsm.SendEvent(ctx, OnRecover, nil)
 			if err != nil {
 				log.Errorf("Error sending OnStart event: %v",
 					err)
@@ -380,9 +378,7 @@ func (m *Manager) startLoopInFsm(ctx context.Context,
 
 	// Send the start event to the state machine.
 	go func() {
-		err = loopInFsm.SendEvent(OnInitHtlc, EventContext{
-			ctx: ctx,
-		})
+		err = loopInFsm.SendEvent(ctx, OnInitHtlc, nil)
 		if err != nil {
 			log.Errorf("Error sending OnNewRequest event: %v", err)
 		}

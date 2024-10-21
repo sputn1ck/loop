@@ -36,11 +36,6 @@ type FSM struct {
 	htlcServerNoncesExtremelyHighFee [][musig2.PubNonceSize]byte
 }
 
-type EventContext struct {
-	// HtlcTx contains the htlc transaction that is being initiated.
-	ctx context.Context
-}
-
 // NewFSM creates a new loop-in state machine.
 func NewFSM(ctx context.Context, loopIn *StaticAddressLoopIn, cfg *Config,
 	recoverStateMachine bool) (*FSM, error) {
@@ -266,16 +261,12 @@ func (f *FSM) LoopInStatesV0() fsm.States {
 }
 
 // updateLoopIn is called after every action and updates the loop-in in the db.
-func (f *FSM) updateLoopIn(notification fsm.Notification) {
+func (f *FSM) updateLoopIn(ctx context.Context, notification fsm.Notification) {
 	f.Infof("Current: %v", notification.NextState)
 
 	// Skip the update if the loop-in is not yet initialized. This happens
 	// on the entry action of the fsm.
 	if f.loopIn == nil {
-		return
-	}
-	eventCtx, ok := notification.EventContext.(EventContext)
-	if !ok {
 		return
 	}
 
@@ -286,7 +277,7 @@ func (f *FSM) updateLoopIn(notification fsm.Notification) {
 		return
 	}
 
-	stored, err := f.cfg.Store.IsStored(eventCtx.ctx, f.loopIn.SwapHash)
+	stored, err := f.cfg.Store.IsStored(ctx, f.loopIn.SwapHash)
 	if err != nil {
 		f.Errorf("Error checking if loop-in is stored: %v", err)
 
@@ -299,7 +290,7 @@ func (f *FSM) updateLoopIn(notification fsm.Notification) {
 		return
 	}
 
-	err = f.cfg.Store.UpdateLoopIn(eventCtx.ctx, f.loopIn)
+	err = f.cfg.Store.UpdateLoopIn(ctx, f.loopIn)
 	if err != nil {
 		f.Errorf("Error updating loop-in: %v", err)
 

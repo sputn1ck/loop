@@ -130,8 +130,6 @@ type FSM struct {
 
 	address *script.StaticAddress
 
-	ctx context.Context
-
 	blockNtfnChan chan uint32
 
 	finalizedDepositChan chan wire.OutPoint
@@ -159,7 +157,6 @@ func NewFSM(ctx context.Context, deposit *Deposit, cfg *ManagerConfig,
 		deposit:              deposit,
 		params:               params,
 		address:              address,
-		ctx:                  ctx,
 		blockNtfnChan:        make(chan uint32),
 		finalizedDepositChan: finalizedDepositChan,
 	}
@@ -189,7 +186,7 @@ func NewFSM(ctx context.Context, deposit *Deposit, cfg *ManagerConfig,
 		for {
 			select {
 			case currentHeight := <-depoFsm.blockNtfnChan:
-				depoFsm.handleBlockNotification(currentHeight)
+				depoFsm.handleBlockNotification(ctx, currentHeight)
 
 			case <-ctx.Done():
 				return
@@ -203,15 +200,17 @@ func NewFSM(ctx context.Context, deposit *Deposit, cfg *ManagerConfig,
 // handleBlockNotification inspects the current block height and sends the
 // OnExpiry event to publish the expiry sweep transaction if the deposit timed
 // out, or it republishes the expiry sweep transaction if it was not yet swept.
-func (f *FSM) handleBlockNotification(currentHeight uint32) {
+func (f *FSM) handleBlockNotification(ctx context.Context,
+	currentHeight uint32) {
+
 	// If the deposit is expired but not yet sufficiently confirmed, we
 	// republish the expiry sweep transaction.
 	if f.deposit.IsExpired(currentHeight, f.params.Expiry) {
 		if f.deposit.IsInState(WaitForExpirySweep) {
-			f.PublishExpirySweepAction(nil)
+			f.PublishExpirySweepAction(ctx, nil)
 		} else {
 			go func() {
-				err := f.SendEvent(OnExpiry, nil)
+				err := f.SendEvent(ctx, OnExpiry, nil)
 				if err != nil {
 					log.Debugf("error sending OnExpiry "+
 						"event: %w", err)
@@ -355,7 +354,7 @@ func (f *FSM) DepositStatesV0() fsm.States {
 
 // DepositEntryFunction is called after every action and updates the deposit in
 // the db.
-func (f *FSM) updateDeposit(notification fsm.Notification) {
+func (f *FSM) updateDeposit(ctx context.Context, notification fsm.Notification) {
 	if f.deposit == nil {
 		return
 	}
@@ -392,7 +391,7 @@ func (f *FSM) updateDeposit(notification fsm.Notification) {
 		return
 	}
 
-	err := f.cfg.Store.UpdateDeposit(f.ctx, f.deposit)
+	err := f.cfg.Store.UpdateDeposit(ctx, f.deposit)
 	if err != nil {
 		f.Errorf("unable to update deposit: %w", err)
 	}
@@ -466,8 +465,10 @@ func (f *FSM) Errorf(format string, args ...interface{}) {
 }
 
 // SignDescriptor returns the sign descriptor for the static address output.
-func (f *FSM) SignDescriptor() (*lndclient.SignDescriptor, error) {
-	address, err := f.cfg.AddressManager.GetStaticAddress(f.ctx)
+func (f *FSM) SignDescriptor(ctx context.Context) (*lndclient.SignDescriptor,
+	error) {
+
+	address, err := f.cfg.AddressManager.GetStaticAddress(ctx)
 	if err != nil {
 		return nil, err
 	}

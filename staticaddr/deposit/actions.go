@@ -1,6 +1,7 @@
 package deposit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,10 +20,12 @@ const (
 // PublishExpirySweepAction creates and publishes the timeout transaction that
 // spends the deposit from the static address timeout leaf to the  predefined
 // timeout sweep pkscript.
-func (f *FSM) PublishExpirySweepAction(_ fsm.EventContext) fsm.EventType {
+func (f *FSM) PublishExpirySweepAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
+
 	msgTx := wire.NewMsgTx(2)
 
-	params, err := f.cfg.AddressManager.GetStaticAddressParameters(f.ctx)
+	params, err := f.cfg.AddressManager.GetStaticAddressParameters(ctx)
 	if err != nil {
 		return fsm.OnError
 	}
@@ -36,7 +39,7 @@ func (f *FSM) PublishExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 
 	// Estimate the fee rate of an expiry spend transaction.
 	feeRateEstimator, err := f.cfg.WalletKit.EstimateFeeRate(
-		f.ctx, DefaultConfTarget,
+		ctx, DefaultConfTarget,
 	)
 	if err != nil {
 		return f.HandleError(fmt.Errorf("timeout sweep fee "+
@@ -66,19 +69,19 @@ func (f *FSM) PublishExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 
 	prevOut := []*wire.TxOut{txOut}
 
-	signDesc, err := f.SignDescriptor()
+	signDesc, err := f.SignDescriptor(ctx)
 	if err != nil {
 		return f.HandleError(err)
 	}
 
 	rawSigs, err := f.cfg.Signer.SignOutputRaw(
-		f.ctx, msgTx, []*lndclient.SignDescriptor{signDesc}, prevOut,
+		ctx, msgTx, []*lndclient.SignDescriptor{signDesc}, prevOut,
 	)
 	if err != nil {
 		return f.HandleError(err)
 	}
 
-	address, err := f.cfg.AddressManager.GetStaticAddress(f.ctx)
+	address, err := f.cfg.AddressManager.GetStaticAddress(ctx)
 	if err != nil {
 		return f.HandleError(err)
 	}
@@ -92,7 +95,7 @@ func (f *FSM) PublishExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 	txLabel := fmt.Sprintf("timeout sweep for deposit %v",
 		f.deposit.OutPoint)
 
-	err = f.cfg.WalletKit.PublishTransaction(f.ctx, msgTx, txLabel)
+	err = f.cfg.WalletKit.PublishTransaction(ctx, msgTx, txLabel)
 	if err != nil {
 		if !strings.Contains(err.Error(), "output already spent") {
 			log.Errorf("%v: %v", txLabel, err)
@@ -109,9 +112,11 @@ func (f *FSM) PublishExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 
 // WaitForExpirySweepAction waits for a sufficient number of confirmations
 // before a timeout sweep is considered successful.
-func (f *FSM) WaitForExpirySweepAction(_ fsm.EventContext) fsm.EventType {
+func (f *FSM) WaitForExpirySweepAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
+
 	spendChan, errSpendChan, err := f.cfg.ChainNotifier.RegisterConfirmationsNtfn( //nolint:lll
-		f.ctx, nil, f.deposit.TimeOutSweepPkScript, DefaultConfTarget,
+		ctx, nil, f.deposit.TimeOutSweepPkScript, DefaultConfTarget,
 		int32(f.deposit.ConfirmationHeight),
 	)
 	if err != nil {
@@ -127,7 +132,7 @@ func (f *FSM) WaitForExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 		f.deposit.ExpirySweepTxid = confirmedTx.Tx.TxHash()
 		return OnExpirySwept
 
-	case <-f.ctx.Done():
+	case <-ctx.Done():
 		return fsm.OnError
 	}
 }
@@ -135,14 +140,16 @@ func (f *FSM) WaitForExpirySweepAction(_ fsm.EventContext) fsm.EventType {
 // SweptExpiredDepositAction is the final action of the FSM. It signals to the
 // manager that the deposit has been swept and the FSM can be removed. It also
 // ends the state machine main loop by cancelling its context.
-func (f *FSM) SweptExpiredDepositAction(_ fsm.EventContext) fsm.EventType {
+func (f *FSM) SweptExpiredDepositAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
+
 	select {
-	case <-f.ctx.Done():
+	case <-ctx.Done():
 		return fsm.OnError
 
 	default:
 		f.finalizedDepositChan <- f.deposit.OutPoint
-		f.ctx.Done()
+		ctx.Done()
 	}
 
 	return fsm.NoOp
@@ -150,9 +157,11 @@ func (f *FSM) SweptExpiredDepositAction(_ fsm.EventContext) fsm.EventType {
 
 // FinalizeDepositAction is the final action after a withdrawal. It signals to
 // the manager that the deposit has been swept and the FSM can be removed.
-func (f *FSM) FinalizeDepositAction(_ fsm.EventContext) fsm.EventType {
+func (f *FSM) FinalizeDepositAction(ctx context.Context,
+	_ fsm.EventContext) fsm.EventType {
+
 	select {
-	case <-f.ctx.Done():
+	case <-ctx.Done():
 		return fsm.OnError
 
 	default:

@@ -36,7 +36,9 @@ func NewManager(cfg *Config) *Manager {
 }
 
 // Run runs the reservation manager.
-func (m *Manager) Run(ctx context.Context, height int32) error {
+func (m *Manager) Run(ctx context.Context, height int32,
+	initChan chan struct{}) error {
+
 	log.Debugf("Starting reservation manager")
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -57,6 +59,8 @@ func (m *Manager) Run(ctx context.Context, height int32) error {
 	}
 
 	ntfnChan := m.cfg.NotificationManager.SubscribeReservations(runCtx)
+
+	close(initChan)
 
 	for {
 		select {

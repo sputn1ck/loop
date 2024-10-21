@@ -12,6 +12,8 @@ import (
 	"github.com/lightninglabs/loop/fsm"
 	"github.com/lightninglabs/loop/instantout"
 	"github.com/lightninglabs/loop/instantout/reservation"
+	"github.com/lightninglabs/loop/staticaddr/deposit"
+	"github.com/lightninglabs/loop/staticaddr/loopin"
 )
 
 func main() {
@@ -53,6 +55,20 @@ func run() error {
 	case "instantout":
 		instantout := &instantout.FSM{}
 		err = writeMermaidFile(fp, instantout.GetV1ReservationStates())
+		if err != nil {
+			return err
+		}
+
+	case "static-deposit":
+		deposit := &deposit.FSM{}
+		err = writeMermaidFile(fp, deposit.DepositStatesV0())
+		if err != nil {
+			return err
+		}
+
+	case "static-loopin":
+		loopin := &loopin.FSM{}
+		err = writeMermaidFile(fp, loopin.LoopInStatesV0())
 		if err != nil {
 			return err
 		}

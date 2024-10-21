@@ -3,28 +3,34 @@ stateDiagram-v2
 [*] --> Init: OnStart
 BuildHtlc
 BuildHtlc --> PushPreimage: OnHtlcSigReceived
-BuildHtlc --> InstantFailedOutFailed: OnError
-BuildHtlc --> InstantFailedOutFailed: OnRecover
+BuildHtlc --> InstantOutFailed: OnError
+BuildHtlc --> InstantOutFailed: OnRecover
 FailedHtlcSweep
+FailedHtlcSweep --> PublishHtlcSweep: OnRecover
+FinishedHtlcPreimageSweep
 FinishedSweeplessSweep
 Init
+Init --> InstantOutFailed: OnError
+Init --> InstantOutFailed: OnRecover
 Init --> SendPaymentAndPollAccepted: OnInit
-Init --> InstantFailedOutFailed: OnError
-Init --> InstantFailedOutFailed: OnRecover
-InstantFailedOutFailed
+InstantOutFailed
 PublishHtlc
-PublishHtlc --> FailedHtlcSweep: OnError
 PublishHtlc --> PublishHtlc: OnRecover
-PublishHtlc --> WaitForHtlcSweepConfirmed: OnHtlcBroadcasted
+PublishHtlc --> PublishHtlcSweep: OnHtlcPublished
+PublishHtlc --> FailedHtlcSweep: OnError
+PublishHtlcSweep
+PublishHtlcSweep --> WaitForHtlcSweepConfirmed: OnHtlcSweepPublished
+PublishHtlcSweep --> PublishHtlcSweep: OnRecover
+PublishHtlcSweep --> FailedHtlcSweep: OnError
 PushPreimage
-PushPreimage --> PushPreimage: OnRecover
 PushPreimage --> WaitForSweeplessSweepConfirmed: OnSweeplessSweepPublished
-PushPreimage --> InstantFailedOutFailed: OnError
+PushPreimage --> InstantOutFailed: OnError
 PushPreimage --> PublishHtlc: OnErrorPublishHtlc
+PushPreimage --> PushPreimage: OnRecover
 SendPaymentAndPollAccepted
 SendPaymentAndPollAccepted --> BuildHtlc: OnPaymentAccepted
-SendPaymentAndPollAccepted --> InstantFailedOutFailed: OnError
-SendPaymentAndPollAccepted --> InstantFailedOutFailed: OnRecover
+SendPaymentAndPollAccepted --> InstantOutFailed: OnError
+SendPaymentAndPollAccepted --> InstantOutFailed: OnRecover
 WaitForHtlcSweepConfirmed
 WaitForHtlcSweepConfirmed --> FinishedHtlcPreimageSweep: OnHtlcSwept
 WaitForHtlcSweepConfirmed --> WaitForHtlcSweepConfirmed: OnRecover

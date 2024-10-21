@@ -20,6 +20,17 @@ var (
 	ErrSwapDoesNotExist  = errors.New("swap does not exist")
 )
 
+// InitInstantOutRequest is a request to initialize an instant out.
+type InitInstantOutRequest struct {
+	// reqCtx is the eventCtx for the OnStart event.
+	reqCtx *InitInstantOutCtx
+	// errResChan is a channel that will receive the result of the
+	// initialization.
+	errResChan chan error
+	// fsmResChan is a channel that will receive the FSM.
+	fsmResChan chan *FSM
+}
+
 // Manager manages the instantout state machines.
 type Manager struct {
 	// cfg contains all the services that the reservation manager needs to
@@ -29,13 +40,14 @@ type Manager struct {
 	// activeInstantOuts contains all the active instantouts.
 	activeInstantOuts map[lntypes.Hash]*FSM
 
+	// instantOutInitRequests contains all the instant out init requests.
+	instantOutInitRequests chan *InitInstantOutRequest
+
 	// currentHeight stores the currently best known block height.
 	currentHeight int32
 
 	// blockEpochChan receives new block heights.
 	blockEpochChan chan int32
-
-	runCtx context.Context
 
 	sync.Mutex
 }
@@ -43,9 +55,10 @@ type Manager struct {
 // NewInstantOutManager creates a new instantout manager.
 func NewInstantOutManager(cfg *Config) *Manager {
 	return &Manager{
-		cfg:               cfg,
-		activeInstantOuts: make(map[lntypes.Hash]*FSM),
-		blockEpochChan:    make(chan int32),
+		cfg:                    cfg,
+		activeInstantOuts:      make(map[lntypes.Hash]*FSM),
+		blockEpochChan:         make(chan int32),
+		instantOutInitRequests: make(chan *InitInstantOutRequest),
 	}
 }
 
@@ -61,7 +74,6 @@ func (m *Manager) Run(ctx context.Context, initChan chan struct{},
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	m.runCtx = runCtx
 	m.currentHeight = height
 
 	err := m.recoverInstantOuts(runCtx)
@@ -88,6 +100,28 @@ func (m *Manager) Run(ctx context.Context, initChan chan struct{},
 			m.Lock()
 			m.currentHeight = height
 			m.Unlock()
+
+		case initReq := <-m.instantOutInitRequests:
+			m.Lock()
+			instantOut, err := NewFSM(
+				m.cfg, ProtocolVersionFullReservation,
+			)
+			if err != nil {
+				m.Unlock()
+				initReq.errResChan <- err
+				continue
+			}
+			m.activeInstantOuts[instantOut.InstantOut.SwapHash] = instantOut
+			m.Unlock()
+
+			// Start the instantout FSM.
+			go func() {
+				err := instantOut.SendEvent(runCtx, OnStart, initReq.reqCtx)
+				if err != nil {
+					log.Errorf("Error sending event: %v", err)
+				}
+			}()
+			initReq.fsmResChan <- instantOut
 
 		case err := <-newBlockErrChan:
 			return err
@@ -152,33 +186,30 @@ func (m *Manager) NewInstantOut(ctx context.Context,
 		}
 	}
 
-	m.Lock()
 	// Create the instantout request.
-	request := &InitInstantOutCtx{
-		cltvExpiry:      m.currentHeight + int32(defaultCltv),
-		reservations:    reservations,
-		initationHeight: m.currentHeight,
-		protocolVersion: CurrentProtocolVersion(),
-		sweepAddress:    sweepAddr,
+	request := &InitInstantOutRequest{
+		reqCtx: &InitInstantOutCtx{
+			cltvExpiry:      m.currentHeight + int32(defaultCltv),
+			reservations:    reservations,
+			initationHeight: m.currentHeight,
+			protocolVersion: CurrentProtocolVersion(),
+			sweepAddress:    sweepAddr,
+		},
+		errResChan: make(chan error),
+		fsmResChan: make(chan *FSM),
 	}
 
-	instantOut, err := NewFSM(
-		m.cfg, ProtocolVersionFullReservation,
-	)
-	if err != nil {
-		m.Unlock()
+	m.instantOutInitRequests <- request
+
+	var instantOut *FSM
+
+	select {
+	case err := <-request.errResChan:
 		return nil, err
-	}
-	m.activeInstantOuts[instantOut.InstantOut.SwapHash] = instantOut
-	m.Unlock()
 
-	// Start the instantout FSM.
-	go func() {
-		err := instantOut.SendEvent(m.runCtx, OnStart, request)
-		if err != nil {
-			log.Errorf("Error sending event: %v", err)
-		}
-	}()
+	case instantOut = <-request.fsmResChan:
+
+	}
 
 	// If everything went well, we'll wait for the instant out to be
 	// waiting for sweepless sweep to be confirmed.

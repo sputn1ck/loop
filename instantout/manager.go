@@ -111,7 +111,7 @@ func (m *Manager) recoverInstantOuts(ctx context.Context) error {
 		log.Debugf("Recovering instantout %v", instantOut.SwapHash)
 
 		instantOutFSM, err := NewFSMFromInstantOut(
-			ctx, m.cfg, instantOut,
+			m.cfg, instantOut,
 		)
 		if err != nil {
 			return err
@@ -122,7 +122,7 @@ func (m *Manager) recoverInstantOuts(ctx context.Context) error {
 		// As SendEvent can block, we'll start a goroutine to process
 		// the event.
 		go func() {
-			err := instantOutFSM.SendEvent(OnRecover, nil)
+			err := instantOutFSM.SendEvent(ctx, OnRecover, nil)
 			if err != nil {
 				log.Errorf("FSM %v Error sending recover "+
 					"event %v, state: %v",
@@ -163,7 +163,7 @@ func (m *Manager) NewInstantOut(ctx context.Context,
 	}
 
 	instantOut, err := NewFSM(
-		m.runCtx, m.cfg, ProtocolVersionFullReservation,
+		m.cfg, ProtocolVersionFullReservation,
 	)
 	if err != nil {
 		m.Unlock()
@@ -174,7 +174,7 @@ func (m *Manager) NewInstantOut(ctx context.Context,
 
 	// Start the instantout FSM.
 	go func() {
-		err := instantOut.SendEvent(OnStart, request)
+		err := instantOut.SendEvent(m.runCtx, OnStart, request)
 		if err != nil {
 			log.Errorf("Error sending event: %v", err)
 		}

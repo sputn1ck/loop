@@ -111,9 +111,7 @@ func (m *Manager) newReservation(ctx context.Context, currentHeight uint32,
 	// Create the reservation state machine. We need to pass in the runCtx
 	// of the reservation manager so that the state machine will keep on
 	// running even if the grpc conte
-	reservationFSM := NewFSM(
-		ctx, m.cfg,
-	)
+	reservationFSM := NewFSM(m.cfg)
 
 	// Add the reservation to the active reservations map.
 	m.Lock()
@@ -130,7 +128,7 @@ func (m *Manager) newReservation(ctx context.Context, currentHeight uint32,
 
 	// Send the init event to the state machine.
 	go func() {
-		err = reservationFSM.SendEvent(OnServerRequest, initContext)
+		err = reservationFSM.SendEvent(m.runCtx, OnServerRequest, initContext)
 		if err != nil {
 			log.Errorf("Error sending init event: %v", err)
 		}
@@ -172,7 +170,7 @@ func (m *Manager) RecoverReservations(ctx context.Context) error {
 		fsmCtx := context.WithValue(ctx, reservation.ID, nil)
 
 		reservationFSM := NewFSMFromReservation(
-			fsmCtx, m.cfg, reservation,
+			m.cfg, reservation,
 		)
 
 		m.activeReservations[reservation.ID] = reservationFSM
@@ -180,7 +178,7 @@ func (m *Manager) RecoverReservations(ctx context.Context) error {
 		// As SendEvent can block, we'll start a goroutine to process
 		// the event.
 		go func() {
-			err := reservationFSM.SendEvent(OnRecover, nil)
+			err := reservationFSM.SendEvent(fsmCtx, OnRecover, nil)
 			if err != nil {
 				log.Errorf("FSM %v Error sending recover "+
 					"event %v, state: %v",
@@ -217,7 +215,7 @@ func (m *Manager) LockReservation(ctx context.Context, id ID) error {
 	}
 
 	// Try to send the lock event to the reservation.
-	err := reservation.SendEvent(OnLocked, nil)
+	err := reservation.SendEvent(ctx, OnLocked, nil)
 	if err != nil {
 		return err
 	}
@@ -237,7 +235,7 @@ func (m *Manager) UnlockReservation(ctx context.Context, id ID) error {
 	}
 
 	// Try to send the unlock event to the reservation.
-	err := reservation.SendEvent(OnUnlocked, nil)
+	err := reservation.SendEvent(ctx, OnUnlocked, nil)
 	if err != nil && strings.Contains(err.Error(), "config error") {
 		// If the error is a config error, we can ignore it, as the
 		// reservation is already unlocked.

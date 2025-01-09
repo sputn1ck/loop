@@ -208,6 +208,26 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		PaymentTimeout:          paymentTimeout,
 	}
 
+	// If the asset id is set, we need to set the asset amount and asset id
+	// in the request.
+	if in.AssetInfo != nil {
+		if in.AssetInfo.AssetId == nil ||
+			in.AssetInfo.AssetEdgeNode == nil {
+
+			return nil, fmt.Errorf(
+				"asset id and edge node must both be set",
+			)
+		}
+
+		req.AssetAmount = btcutil.Amount(in.Amt)
+		req.AssetId = in.AssetInfo.AssetId
+		req.AssetEdgeNode = in.AssetInfo.AssetEdgeNode
+
+		// We'll set the sat amount to zero, as this gets set later
+		// when we calculate the total amount to send.
+		req.Amount = 0
+	}
+
 	switch {
 	case in.LoopOutChannel != 0 && len(in.OutgoingChanSet) > 0: // nolint:staticcheck
 		return nil, errors.New("loop_out_channel and outgoing_" +
@@ -707,12 +727,25 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 		req.SwapPublicationDeadline,
 	)
 
-	quote, err := s.impl.LoopOutQuote(ctx, &loop.LoopOutQuoteRequest{
+	loopOutQuoteReq := &loop.LoopOutQuoteRequest{
 		Amount:                  btcutil.Amount(req.Amt),
 		SweepConfTarget:         confTarget,
 		SwapPublicationDeadline: publicactionDeadline,
 		Initiator:               defaultLoopdInitiator,
-	})
+	}
+
+	if req.AssetInfo != nil {
+		if req.AssetInfo.AssetId == nil ||
+			req.AssetInfo.AssetEdgeNode == nil {
+
+			return nil, fmt.Errorf(
+				"asset id and edge node must both be set")
+		}
+		loopOutQuoteReq.AssetId = req.AssetInfo.AssetId
+		loopOutQuoteReq.AssetEdgeNode = req.AssetInfo.AssetEdgeNode
+	}
+
+	quote, err := s.impl.LoopOutQuote(ctx, loopOutQuoteReq)
 	if err != nil {
 		return nil, err
 	}
@@ -723,6 +756,7 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 		SwapFeeSat:      int64(quote.SwapFee),
 		SwapPaymentDest: quote.SwapPaymentDest[:],
 		ConfTarget:      confTarget,
+		InvoiceAmtSat:   int64(quote.InvoiceAmtSat),
 	}, nil
 }
 

@@ -206,6 +206,8 @@ func newLoopOutSwap(globalCtx context.Context, cfg *swapConfig,
 		},
 		OutgoingChanSet: chanSet,
 		PaymentTimeout:  request.PaymentTimeout,
+		AssetId:         request.AssetId,
+		AssetEdgeNode:   request.AssetEdgeNode,
 	}
 
 	swapKit := newSwapKit(

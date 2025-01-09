@@ -98,6 +98,20 @@ type OutRequest struct {
 	// the configured maximum payment timeout) the total time spent may be
 	// a multiple of this value.
 	PaymentTimeout time.Duration
+
+	// AssetId is an optional asset id that can be used to specify the asset
+	// that will be used to pay for the swap. If this is set, a connection
+	// to a tapd server is required to pay for the asset.
+	AssetId []byte
+
+	// AssetEdgeNode is an optional Parameter that is required should the
+	// tapd server have multiple channels with different peers for the given
+	// asset id.
+	AssetEdgeNode []byte
+
+	// AssetAmount is the amount of the asset that will be used to pay for
+	// the swap. This is only set if the asset id is set.
+	AssetAmount btcutil.Amount
 }
 
 // Out contains the full details of a loop out request. This includes things
@@ -145,6 +159,12 @@ type LoopOutQuoteRequest struct {
 	// initiated the swap (loop CLI, autolooper, LiT UI and so on) and is
 	// appended to the user agent string.
 	Initiator string
+
+	// AssetId is the asset that we'll quote for.
+	AssetId []byte
+
+	// AssetEdgeNode is the pubkey of the peer that we'll quote for.
+	AssetEdgeNode []byte
 }
 
 // LoopOutTerms are the server terms on which it executes swaps.
@@ -181,6 +201,9 @@ type LoopOutQuote struct {
 	// SwapPaymentDest is the node pubkey where to swap payment needs to be
 	// sent to.
 	SwapPaymentDest [33]byte
+
+	// InvoiceAmtSat is the amount of the invoice in satoshis.
+	InvoiceAmtSat btcutil.Amount
 }
 
 // LoopInRequest contains the required parameters for the swap.

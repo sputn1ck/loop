@@ -65,6 +65,13 @@ type LoopOutContract struct {
 	// PaymentTimeout is the timeout for any individual off-chain payment
 	// attempt.
 	PaymentTimeout time.Duration
+
+	// AssetId is the optional asset id that is used to pay the swap invoice.
+	AssetId []byte
+
+	// AssetEdgeNode is the asset edge node that is used to pay the
+	// swap invoice.
+	AssetEdgeNode []byte
 }
 
 // ChannelSet stores a set of channels.

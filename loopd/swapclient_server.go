@@ -208,6 +208,18 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		PaymentTimeout:          paymentTimeout,
 	}
 
+	// If the asset id is set, we need to set the asset amount and asset id
+	// in the request.
+	if in.AssetId != nil {
+		req.AssetAmount = btcutil.Amount(in.Amt)
+		req.AssetId = in.AssetId
+		req.AssetEdgeNode = in.AssetEdgeNode
+
+		// We'll set the sat amount to zero, as this gets set later
+		// when we calculate the total amount to send.
+		req.Amount = 0
+	}
+
 	switch {
 	case in.LoopOutChannel != 0 && len(in.OutgoingChanSet) > 0: // nolint:staticcheck
 		return nil, errors.New("loop_out_channel and outgoing_" +
@@ -712,6 +724,8 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 		SweepConfTarget:         confTarget,
 		SwapPublicationDeadline: publicactionDeadline,
 		Initiator:               defaultLoopdInitiator,
+		AssetId:                 req.AssetId,
+		PeerPubkey:              req.AssetEdgeNode,
 	})
 	if err != nil {
 		return nil, err
@@ -723,6 +737,7 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 		SwapFeeSat:      int64(quote.SwapFee),
 		SwapPaymentDest: quote.SwapPaymentDest[:],
 		ConfTarget:      confTarget,
+		InvoiceAmtSat:   int64(quote.InvoiceAmtSat),
 	}, nil
 }
 

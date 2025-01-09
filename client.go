@@ -506,6 +506,29 @@ func (s *Client) resumeSwaps(ctx context.Context,
 func (s *Client) LoopOut(globalCtx context.Context,
 	request *OutRequest) (*LoopOutSwapInfo, error) {
 
+	if request.AssetId != nil {
+		rfq, err := s.assetClient.GetRfqForAsset(
+			globalCtx, request.AssetAmount, request.AssetId,
+			request.AssetEdgeNode,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		satAmt, err := assets.GetSatAmtFromRfq(
+			request.AssetAmount, rfq.BidAssetRate,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		log.Infof("LoopOut %v to %v (channels: %v) with asset %x",
+			satAmt, request.DestAddr, request.OutgoingChanSet,
+			request.AssetId,
+		)
+		request.Amount = satAmt
+	}
+
 	log.Infof("LoopOut %v to %v (channels: %v)",
 		request.Amount, request.DestAddr, request.OutgoingChanSet,
 	)
@@ -530,6 +553,13 @@ func (s *Client) LoopOut(globalCtx context.Context,
 
 	// Create a new swap object for this swap.
 	swapCfg := newSwapConfig(s.lndServices, s.Store, s.Server, s.assetClient)
+
+	// Verify that if we have an asset id set, we have a valid asset client
+	// to use.
+	if request.AssetId != nil && s.assetClient == nil {
+		return nil, errors.New("asset id set but no asset client provided")
+	}
+
 	initResult, err := newLoopOutSwap(
 		globalCtx, swapCfg, initiationHeight, request,
 	)
@@ -579,11 +609,31 @@ func (s *Client) LoopOutQuote(ctx context.Context,
 		return nil, err
 	}
 
-	if request.Amount < terms.MinSwapAmount {
+	satAmount := request.Amount
+	// If we use an Asset we'll rfq to check if the sat amount meets the
+	// min swap amount criteria.
+	if request.AssetId != nil {
+		rfq, err := s.assetClient.GetRfqForAsset(
+			ctx, request.Amount, request.AssetId,
+			request.PeerPubkey,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		satAmount, err = assets.GetSatAmtFromRfq(
+			request.Amount, rfq.BidAssetRate,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if satAmount < terms.MinSwapAmount {
 		return nil, ErrSwapAmountTooLow
 	}
 
-	if request.Amount > terms.MaxSwapAmount {
+	if satAmount > terms.MaxSwapAmount {
 		return nil, ErrSwapAmountTooHigh
 	}
 
@@ -594,7 +644,7 @@ func (s *Client) LoopOutQuote(ctx context.Context,
 	}
 
 	quote, err := s.Server.GetLoopOutQuote(
-		ctx, request.Amount, expiry, request.SwapPublicationDeadline,
+		ctx, satAmount, expiry, request.SwapPublicationDeadline,
 		request.Initiator,
 	)
 	if err != nil {
@@ -613,6 +663,7 @@ func (s *Client) LoopOutQuote(ctx context.Context,
 		MinerFee:        minerFee,
 		PrepayAmount:    quote.PrepayAmount,
 		SwapPaymentDest: quote.SwapPaymentDest,
+		InvoiceAmtSat:   satAmount,
 	}, nil
 }
 

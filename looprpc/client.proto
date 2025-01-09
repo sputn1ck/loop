@@ -336,6 +336,13 @@ message LoopOutRequest {
     as the timeout for the payment.
     */
     uint32 payment_timeout = 19;
+
+    /*
+    The optional asset information to use for the swap. If set, the swap will
+    be paid in the specified asset using the provided edge node. An Asset client
+    must be connected to the loop client to use this feature.
+    */
+    AssetLoopOutInfo asset_info = 20;
 }
 
 /*
@@ -793,6 +800,12 @@ message QuoteRequest {
     the same time.
     */
     repeated string deposit_outpoints = 8;
+
+    /*
+    The optional asset information to use for the swap. If set, the quote will
+    be returned in the specified asset.
+    */
+    AssetLoopOutInfo asset_info = 9;
 }
 
 message InQuoteResponse {
@@ -856,6 +869,11 @@ message OutQuoteResponse {
     The confirmation target to be used for the sweep of the on-chain HTLC.
     */
     int32 conf_target = 6;
+
+    /*
+    The sat amount for the invoice should an asset be used.
+    */
+    int64 invoice_amt_sat = 7;
 }
 
 message ProbeRequest {
@@ -1999,4 +2017,19 @@ message StaticAddressLoopInResponse {
     side and the client can retry the swap with different parameters.
     */
     uint32 payment_timeout_seconds = 11;
+}
+
+message AssetLoopOutInfo {
+    /*
+    The asset id to use to pay for the swap invoice. If set an
+    asset client is needed to set to be able to pay the invoice.
+    */
+    bytes asset_id = 1;
+
+    /*
+    The node identity public key of the peer to ask for a quote for sending out
+    the assets and converting them to satoshis. This must be specified if
+    an asset id is set.
+    */
+    bytes asset_edge_node = 2;
 }

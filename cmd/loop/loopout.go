@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -101,6 +102,18 @@ var loopOutCommand = cli.Command{
 				"payment might be retried, the actual total " +
 				"time may be longer",
 		},
+		cli.StringFlag{
+			Name: "asset_id",
+			Usage: "the asset ID of the asset to loop out, " +
+				"if this is set, the loop daemon will require a connection " +
+				"to a taproot assets daemon",
+		},
+		cli.StringFlag{
+			Name: "asset_edge_node",
+			Usage: "the pubkey of the edge node of the asset to loop out, " +
+				"this is required if the taproot assets daemon has multiple " +
+				"channels of the given asset id with different edge nodes",
+		},
 		forceFlag,
 		labelFlag,
 		verboseFlag,
@@ -186,6 +199,26 @@ func loopOut(ctx *cli.Context) error {
 		}
 	}
 
+	var assetId []byte
+	if ctx.IsSet("asset_id") {
+		assetId, err = hex.DecodeString(ctx.String("asset_id"))
+		if err != nil {
+			return err
+		}
+		if !ctx.IsSet("asset_edge_node") {
+			return fmt.Errorf("asset edge node is required when " +
+				"assetid is set")
+		}
+	}
+
+	var assetEdgeNode []byte
+	if ctx.IsSet("asset_edge_node") {
+		assetEdgeNode, err = hex.DecodeString(ctx.String("asset_edge_node"))
+		if err != nil {
+			return err
+		}
+	}
+
 	client, cleanup, err := getClient(ctx)
 	if err != nil {
 		return err
@@ -210,6 +243,8 @@ func loopOut(ctx *cli.Context) error {
 		Amt:                     int64(amt),
 		ConfTarget:              sweepConfTarget,
 		SwapPublicationDeadline: uint64(swapDeadline.Unix()),
+		AssetId:                 assetId,
+		AssetEdgeNode:           assetEdgeNode,
 	}
 	quote, err := client.LoopOutQuote(context.Background(), quoteReq)
 	if err != nil {
@@ -281,6 +316,8 @@ func loopOut(ctx *cli.Context) error {
 		Label:                   label,
 		Initiator:               defaultInitiator,
 		PaymentTimeout:          uint32(paymentTimeout),
+		AssetId:                 assetId,
+		AssetEdgeNode:           assetEdgeNode,
 	})
 	if err != nil {
 		return err

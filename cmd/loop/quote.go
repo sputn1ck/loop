@@ -267,8 +267,15 @@ func printQuoteOutResp(req *looprpc.QuoteRequest,
 
 	totalFee := resp.HtlcSweepFeeSat + resp.SwapFeeSat
 
-	fmt.Printf(satAmtFmt, "Send off-chain:", req.Amt)
-	fmt.Printf(satAmtFmt, "Receive on-chain:", req.Amt-totalFee)
+	if req.AssetId != nil {
+		fmt.Printf("%-36s %12d assets\n",
+			"Assets Send off-chain:", req.Amt)
+		fmt.Printf(satAmtFmt, "Sats Send off-chain:",
+			resp.InvoiceAmtSat)
+	} else {
+		fmt.Printf(satAmtFmt, "Send off-chain:", resp.InvoiceAmtSat)
+	}
+	fmt.Printf(satAmtFmt, "Receive on-chain:", resp.InvoiceAmtSat-totalFee)
 
 	if !verbose {
 		fmt.Printf(satAmtFmt, "Estimated total fee:", totalFee)

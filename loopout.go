@@ -20,9 +20,11 @@ import (
 	"github.com/lightninglabs/loop/sweep"
 	"github.com/lightninglabs/loop/sweepbatcher"
 	"github.com/lightninglabs/loop/utils"
+	"github.com/lightninglabs/taproot-assets/taprpc/tapchannelrpc"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
 )
 
@@ -87,8 +89,9 @@ type loopOutSwap struct {
 	// to calculate the total cost of the swap.
 	prepayAmount btcutil.Amount
 
-	swapPaymentChan chan paymentResult
-	prePaymentChan  chan paymentResult
+	swapPaymentChan         chan paymentResult
+	prePaymentChan          chan paymentResult
+	waitForRfqCompletedChan chan interface{}
 
 	wg sync.WaitGroup
 }
@@ -139,6 +142,11 @@ func newLoopOutSwap(globalCtx context.Context, cfg *swapConfig,
 	// the server revocation key and the swap and prepay invoices.
 	log.Infof("Initiating swap request at height %v: amt=%v, expiry=%v",
 		currentHeight, request.Amount, request.Expiry)
+
+	// If we have an asset id, we'll add that to the user agent.
+	if request.AssetId != nil {
+		request.Initiator += " asset_out"
+	}
 
 	// The swap deadline will be given to the server for it to use as the
 	// latest swap publication time.
@@ -634,12 +642,21 @@ func (s *loopOutSwap) payInvoices(ctx context.Context) {
 		s.log.Infof("Server recommended routing plugin: %v", pluginType)
 	}
 
+	if s.AssetId != nil {
+		s.waitForRfqCompletedChan = make(chan interface{})
+	}
+
 	// Use the recommended routing plugin.
 	s.swapPaymentChan = s.payInvoice(
 		ctx, s.SwapInvoice, s.MaxSwapRoutingFee,
 		s.LoopOutContract.OutgoingChanSet,
 		s.LoopOutContract.PaymentTimeout, pluginType, true,
 	)
+
+	// We'll nee
+	if s.AssetId != nil {
+		<-s.waitForRfqCompletedChan
+	}
 
 	// Pay the prepay invoice. Won't use the routing plugin here as the
 	// prepay is trivially small and shouldn't normally need any help. We
@@ -717,12 +734,74 @@ func (s *loopOutSwap) payInvoice(ctx context.Context, invoice string,
 	return resultChan
 }
 
+func (s *loopOutSwap) payInvoiceWithAssetClient(ctx context.Context,
+	invoice string) (*lndclient.PaymentStatus, error) {
+
+	totalPaymentTimeout := s.executeConfig.totalPaymentTimeout
+
+	sendReq := &routerrpc.SendPaymentRequest{
+		PaymentRequest: invoice,
+		TimeoutSeconds: int32(totalPaymentTimeout.Seconds()),
+		FeeLimitMsat:   1_000_000,
+	}
+
+	paymentStream, err := s.assets.SendPayment(
+		ctx, &tapchannelrpc.SendPaymentRequest{
+			AssetId:        s.AssetId,
+			PeerPubkey:     s.AssetEdgeNode,
+			PaymentRequest: sendReq,
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	// We want to receive the accepted quote message first, so we know how
+	// many assets we're going to pay.
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			msg, err := paymentStream.Recv()
+			if err != nil {
+				return nil, err
+			}
+
+			switch msg.GetResult().(type) {
+			case *tapchannelrpc.SendPaymentResponse_AcceptedSellOrder:
+				quote := msg.GetAcceptedSellOrder()
+				log.Infof("Accepted quote: %v", quote.AssetAmount)
+				if s.waitForRfqCompletedChan != nil {
+					close(s.waitForRfqCompletedChan)
+					s.waitForRfqCompletedChan = nil
+				}
+
+			case *tapchannelrpc.SendPaymentResponse_PaymentResult:
+				payRes := msg.GetPaymentResult()
+				if payRes.Status == lnrpc.Payment_SUCCEEDED ||
+					payRes.Status == lnrpc.Payment_FAILED {
+
+					return &lndclient.PaymentStatus{
+						State: payRes.Status,
+					}, nil
+				}
+			}
+		}
+	}
+}
+
 // payInvoiceAsync is the asynchronously executed part of paying an invoice.
 func (s *loopOutSwap) payInvoiceAsync(ctx context.Context,
 	invoice string, maxFee btcutil.Amount,
 	outgoingChanIds loopdb.ChannelSet, paymentTimeout time.Duration,
 	pluginType RoutingPluginType, reportPluginResult bool) (
 	*lndclient.PaymentStatus, error) {
+
+	// If we want to use an asset for the payment, we need to use the asset
+	// client.
+	if s.AssetId != nil {
+		return s.payInvoiceWithAssetClient(ctx, invoice)
+	}
 
 	// Extract hash from payment request. Unfortunately the request
 	// components aren't available directly.

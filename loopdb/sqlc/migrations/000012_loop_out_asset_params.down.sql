@@ -1,2 +1,1 @@
-ALTER TABLE loopout_swaps DROP COLUMN asset_id;
-ALTER TABLE loopout_swaps DROP COLUMN asset_edge_node;
+DROP TABLE IF EXISTS loopout_swaps_assets;

@@ -104,14 +104,12 @@ type OutRequest struct {
 	// to a tapd server is required to pay for the asset.
 	AssetId []byte
 
-	// AssetEdgeNode is an optional Parameter that is required should the
-	// tapd server have multiple channels with different peers for the given
-	// asset id.
-	AssetEdgeNode []byte
+	// AssetPrepayRfqId is the rfq id that is used to pay the prepay
+	// invoice.
+	AssetPrepayRfqId []byte
 
-	// AssetAmount is the amount of the asset that will be used to pay for
-	// the swap. This is only set if the asset id is set.
-	AssetAmount btcutil.Amount
+	// AssetSwapRfqId is the rfq id that is used to pay the swap invoice.
+	AssetSwapRfqId []byte
 }
 
 // Out contains the full details of a loop out request. This includes things
@@ -202,8 +200,30 @@ type LoopOutQuote struct {
 	// sent to.
 	SwapPaymentDest [33]byte
 
-	// InvoiceAmtSat is the amount of the invoice in satoshis.
-	InvoiceAmtSat btcutil.Amount
+	// LoopOutRfq is the RFQ that can be used in the actual loop out to
+	// commit to an asset exchange rate.
+	LoopOutRfq *LoopOutRfq
+}
+
+// LoopOutRfq contains the details of an asset request for quote for a loop out
+// swap.
+type LoopOutRfq struct {
+	// PrepayRfqId is the ID of the prepay RFQ.
+	PrepayRfqId []byte
+
+	// PrepayAssetAmt is the amount of the asset that will be used to pay
+	// for the prepay invoice.
+	PrepayAssetAmt btcutil.Amount
+
+	// SwapRfqId is the ID of the swap RFQ.
+	SwapRfqId []byte
+
+	// SwapAssetAmt is the amount of the asset that will be used to pay for
+	// the swap invoice.
+	SwapAssetAmt btcutil.Amount
+
+	// AssetName is the human readable name of the asset.
+	AssetName string
 }
 
 // LoopInRequest contains the required parameters for the swap.
@@ -453,6 +473,9 @@ type SwapInfo struct {
 	// channels that may be used to loop out. On a loop in this field
 	// is nil.
 	OutgoingChanSet loopdb.ChannelSet
+
+	// AssetSwapInfo contains the asset information for the swap.
+	AssetSwapInfo *loopdb.LoopOutAssetSwap
 }
 
 // LastUpdate returns the last update time of the swap.

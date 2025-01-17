@@ -84,8 +84,16 @@ type LoopoutSwap struct {
 	PublicationDeadline time.Time
 	SingleSweep         bool
 	PaymentTimeout      int32
-	AssetID             []byte
-	AssetEdgeNode       []byte
+	IsAssetSwap         bool
+}
+
+type LoopoutSwapsAsset struct {
+	SwapHash           []byte
+	AssetID            []byte
+	SwapRfqID          []byte
+	PrepayRfqID        []byte
+	AssetAmtPaidSwap   int64
+	AssetAmtPaidPrepay int64
 }
 
 type MigrationTracker struct {

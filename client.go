@@ -97,8 +97,9 @@ type Client struct {
 	executor    *executor
 	assetClient *assets.TapdClient
 
-	resumeReady chan struct{}
-	wg          sync.WaitGroup
+	resumeReady    chan struct{}
+	wg             sync.WaitGroup
+	assetNameCache map[string]string
 
 	clientConfig
 }
@@ -342,6 +343,10 @@ func (s *Client) FetchSwaps(ctx context.Context) ([]*SwapInfo, error) {
 			return nil, swap.ErrInvalidOutputType
 		}
 
+		if swp.Contract.AssetSwapInfo != nil {
+			swapInfo.AssetSwapInfo = swp.Contract.AssetSwapInfo
+		}
+
 		swaps = append(swaps, swapInfo)
 	}
 
@@ -507,10 +512,13 @@ func (s *Client) LoopOut(globalCtx context.Context,
 	request *OutRequest) (*LoopOutSwapInfo, error) {
 
 	if request.AssetId != nil {
-		if request.AssetEdgeNode == nil {
-			return nil, errors.New("asset edge node must be set " +
-				"when using an asset id")
+		if request.AssetPrepayRfqId == nil ||
+			request.AssetSwapRfqId == nil {
+
+			return nil, errors.New("asset prepay and swap rfq ids " +
+				"must be set when using an asset id")
 		}
+
 		// Verify that if we have an asset id set, we have a valid asset
 		// client to use.
 		if s.assetClient == nil {
@@ -518,31 +526,16 @@ func (s *Client) LoopOut(globalCtx context.Context,
 				"when using an asset id")
 		}
 
-		rfq, err := s.assetClient.GetRfqForAsset(
-			globalCtx, request.AssetAmount, request.AssetId,
-			request.AssetEdgeNode,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		satAmt, err := assets.GetSatAmtFromRfq(
-			request.AssetAmount, rfq.BidAssetRate,
-		)
-		if err != nil {
-			return nil, err
-		}
-
 		log.Infof("LoopOut %v sats to %v (channels: %v) with asset %x",
-			satAmt, request.DestAddr, request.OutgoingChanSet,
-			request.AssetId,
+			request.Amount, request.DestAddr,
+			request.OutgoingChanSet, request.AssetId,
 		)
-		request.Amount = satAmt
+	} else {
+		log.Infof("LoopOut %v to %v (channels: %v)",
+			request.Amount, request.DestAddr,
+			request.OutgoingChanSet,
+		)
 	}
-
-	log.Infof("LoopOut %v to %v (channels: %v)",
-		request.Amount, request.DestAddr, request.OutgoingChanSet,
-	)
 
 	if err := s.waitForInitialized(globalCtx); err != nil {
 		return nil, err
@@ -563,7 +556,9 @@ func (s *Client) LoopOut(globalCtx context.Context,
 	}
 
 	// Create a new swap object for this swap.
-	swapCfg := newSwapConfig(s.lndServices, s.Store, s.Server, s.assetClient)
+	swapCfg := newSwapConfig(
+		s.lndServices, s.Store, s.Server, s.assetClient,
+	)
 
 	initResult, err := newLoopOutSwap(
 		globalCtx, swapCfg, initiationHeight, request,
@@ -609,36 +604,26 @@ func (s *Client) getExpiry(height int32, terms *LoopOutTerms,
 func (s *Client) LoopOutQuote(ctx context.Context,
 	request *LoopOutQuoteRequest) (*LoopOutQuote, error) {
 
+	if request.AssetId != nil && request.AssetEdgeNode == nil {
+		return nil, errors.New("asset edge node must be set " +
+			"when using an asset id")
+	}
+
+	if request.AssetEdgeNode != nil && request.AssetId == nil {
+		return nil, errors.New("asset id must be set " +
+			"when using an asset edge node")
+	}
+
 	terms, err := s.Server.GetLoopOutTerms(ctx, request.Initiator)
 	if err != nil {
 		return nil, err
 	}
 
-	invoiceAmountSat := request.Amount
-	// If we use an Asset we'll rfq to check if the sat amount meets the
-	// min swap amount criteria.
-	if request.AssetId != nil {
-		rfq, err := s.assetClient.GetRfqForAsset(
-			ctx, request.Amount, request.AssetId,
-			request.AssetEdgeNode,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		invoiceAmountSat, err = assets.GetSatAmtFromRfq(
-			request.Amount, rfq.BidAssetRate,
-		)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if invoiceAmountSat < terms.MinSwapAmount {
+	if request.Amount < terms.MinSwapAmount {
 		return nil, ErrSwapAmountTooLow
 	}
 
-	if invoiceAmountSat > terms.MaxSwapAmount {
+	if request.Amount > terms.MaxSwapAmount {
 		return nil, ErrSwapAmountTooHigh
 	}
 
@@ -649,7 +634,7 @@ func (s *Client) LoopOutQuote(ctx context.Context,
 	}
 
 	quote, err := s.Server.GetLoopOutQuote(
-		ctx, invoiceAmountSat, expiry, request.SwapPublicationDeadline,
+		ctx, request.Amount, expiry, request.SwapPublicationDeadline,
 		request.Initiator,
 	)
 	if err != nil {
@@ -663,13 +648,56 @@ func (s *Client) LoopOutQuote(ctx context.Context,
 		return nil, err
 	}
 
-	return &LoopOutQuote{
+	loopOutQuote := &LoopOutQuote{
 		SwapFee:         quote.SwapFee,
 		MinerFee:        minerFee,
 		PrepayAmount:    quote.PrepayAmount,
 		SwapPaymentDest: quote.SwapPaymentDest,
-		InvoiceAmtSat:   invoiceAmountSat,
-	}, nil
+	}
+
+	// If we use an Asset we'll rfq to get the asset amounts to use for
+	// the swap.
+	if request.AssetId != nil {
+		// First we'll get the prepay prepayRfq.
+		prepayRfq, err := s.assetClient.GetRfqForAsset(
+			ctx, quote.PrepayAmount, request.AssetId,
+			request.AssetEdgeNode,
+		)
+		if err != nil {
+			return nil, err
+		}
+		log.Infof("Prepay RFQ: %v", prepayRfq)
+
+		invoiceAmt := request.Amount + quote.SwapFee -
+			quote.PrepayAmount
+
+		swapRfq, err := s.assetClient.GetRfqForAsset(
+			ctx, invoiceAmt, request.AssetId, request.AssetEdgeNode,
+		)
+		if err != nil {
+			return nil, err
+		}
+		log.Infof("Swap RFQ: %v", swapRfq)
+
+		// We'll also want the asset name to verify for the client.
+		assetName, err := s.assetClient.GetAssetName(
+			ctx, request.AssetId,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		loopOutQuote.LoopOutRfq = &LoopOutRfq{
+			PrepayRfqId:    prepayRfq.Id,
+			PrepayAssetAmt: btcutil.Amount(prepayRfq.AssetAmount),
+			SwapRfqId:      swapRfq.Id,
+			SwapAssetAmt:   btcutil.Amount(swapRfq.AssetAmount),
+			AssetName:      assetName,
+		}
+
+	}
+
+	return loopOutQuote, nil
 }
 
 // getLoopOutSweepFee is a helper method to estimate the loop out htlc sweep

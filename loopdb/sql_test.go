@@ -91,7 +91,11 @@ func TestSqliteLoopOutStore(t *testing.T) {
 	})
 
 	assetSwap := unrestrictedSwap
-	assetSwap.AssetId = testAssetId
+	assetSwap.AssetSwapInfo = &LoopOutAssetSwap{
+		AssetId:     testAssetId,
+		PrepayRfqId: testAssetId,
+		SwapRfqId:   testAssetId,
+	}
 
 	t.Run("asset swap", func(t *testing.T) {
 		testSqliteLoopOutStore(t, &assetSwap)

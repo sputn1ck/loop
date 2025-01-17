@@ -2,9 +2,11 @@ package assets
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -13,6 +15,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/taprpc/priceoraclerpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/rfqrpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/tapchannelrpc"
+	"github.com/lightninglabs/taproot-assets/taprpc/universerpc"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"google.golang.org/grpc"
@@ -44,11 +47,14 @@ func DefaultTapdConfig() *TapdConfig {
 
 // TapdClient is a client for the Tap daemon.
 type TapdClient struct {
-	cc *grpc.ClientConn
+	sync.Mutex
+	assetNameCache map[string]string
+	cc             *grpc.ClientConn
 	taprpc.TaprootAssetsClient
 	tapchannelrpc.TaprootAssetChannelsClient
 	priceoraclerpc.PriceOracleClient
 	rfqrpc.RfqClient
+	universerpc.UniverseClient
 }
 
 // NewTapdClient retusn a new taproot assets client.
@@ -61,11 +67,13 @@ func NewTapdClient(config *TapdConfig) (*TapdClient, error) {
 
 	// Create the TapdClient.
 	client := &TapdClient{
+		assetNameCache:             make(map[string]string),
 		cc:                         conn,
 		TaprootAssetsClient:        taprpc.NewTaprootAssetsClient(conn),
 		TaprootAssetChannelsClient: tapchannelrpc.NewTaprootAssetChannelsClient(conn),
 		PriceOracleClient:          priceoraclerpc.NewPriceOracleClient(conn),
 		RfqClient:                  rfqrpc.NewRfqClient(conn),
+		UniverseClient:             universerpc.NewUniverseClient(conn),
 	}
 
 	return client, nil
@@ -104,12 +112,12 @@ func GetSatAmtFromRfq(assetAmt btcutil.Amount,
 // GetRfqForAsset returns a RFQ for the given asset with the given amount and
 // to the given peer.
 func (c *TapdClient) GetRfqForAsset(ctx context.Context,
-	amt btcutil.Amount, assetId, peerPubkey []byte) (
+	satAmount btcutil.Amount, assetId, peerPubkey []byte) (
 	*rfqrpc.PeerAcceptedSellQuote, error) {
 
 	// TODO(sputn1ck): magic value, should be configurable?
 	feeLimit, err := lnrpc.UnmarshallAmt(
-		int64(amt)+int64(amt.MulF64(1.1)), 0,
+		int64(satAmount)+int64(satAmount.MulF64(1.1)), 0,
 	)
 	if err != nil {
 		return nil, err
@@ -146,6 +154,44 @@ func (c *TapdClient) GetRfqForAsset(ctx context.Context,
 	}
 
 	return nil, fmt.Errorf("no accepted quote")
+}
+
+// GetAssetName returns the human readable name of the asset.
+func (c *TapdClient) GetAssetName(ctx context.Context,
+	assetId []byte) (string, error) {
+
+	c.Lock()
+	defer c.Unlock()
+	assetIdStr := hex.EncodeToString(assetId)
+	if name, ok := c.assetNameCache[assetIdStr]; ok {
+		return name, nil
+	}
+
+	assetStats, err := c.UniverseClient.QueryAssetStats(
+		ctx, &universerpc.AssetStatsQuery{
+			AssetIdFilter: assetId,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+
+	if len(assetStats.AssetStats) == 0 {
+		return "", fmt.Errorf("asset not found")
+	}
+
+	var assetName string
+
+	// If the asset belongs to a group, return the group name.
+	if assetStats.AssetStats[0].GroupAnchor != nil {
+		assetName = assetStats.AssetStats[0].GroupAnchor.AssetName
+	} else {
+		assetName = assetStats.AssetStats[0].Asset.AssetName
+	}
+
+	c.assetNameCache[assetIdStr] = assetName
+
+	return assetName, nil
 }
 
 func getClientConn(config *TapdConfig) (*grpc.ClientConn, error) {

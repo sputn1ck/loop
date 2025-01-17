@@ -165,6 +165,12 @@ func (s *StoreMock) FetchLoopInSwaps(ctx context.Context) ([]*LoopIn,
 	return result, nil
 }
 
+func (s *StoreMock) UpdateLoopOutAssetInfo(ctx context.Context,
+	hash lntypes.Hash, asset *LoopOutAssetSwap) error {
+
+	return nil
+}
+
 // CreateLoopIn adds an initiated loop in swap to the store.
 //
 // NOTE: Part of the SwapStore interface.

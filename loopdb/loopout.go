@@ -66,12 +66,27 @@ type LoopOutContract struct {
 	// attempt.
 	PaymentTimeout time.Duration
 
+	// AssetSwapInfo contains information, should the loop out swpa be
+	// paid via an asset channel.
+	AssetSwapInfo *LoopOutAssetSwap
+}
+
+type LoopOutAssetSwap struct {
 	// AssetId is the optional asset id that is used to pay the swap invoice.
 	AssetId []byte
 
-	// AssetEdgeNode is the asset edge node that is used to pay the
-	// swap invoice.
-	AssetEdgeNode []byte
+	// PrepayRfqId is the rfq id that is used to pay the prepay invoice.
+	PrepayRfqId []byte
+
+	// SwapRfqId is the rfq id that is used to pay the swap invoice.
+	SwapRfqId []byte
+
+	// PrepayPaidAmt is the asset amount that was paid for the prepay
+	// invoice.
+	PrepayPaidAmt btcutil.Amount
+
+	// SwapPaidAmt is the asset amount that was paid for the swap invoice.
+	SwapPaidAmt btcutil.Amount
 }
 
 // ChannelSet stores a set of channels.

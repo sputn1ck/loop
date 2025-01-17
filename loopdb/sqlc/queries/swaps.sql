@@ -26,6 +26,14 @@ JOIN
 WHERE
     swaps.swap_hash = $1;
 
+-- name: GetLoopOutSwapAssetInfo :one
+SELECT
+    *
+FROM
+    loopout_swaps_assets
+WHERE
+    swap_hash = $1;
+
 -- name: GetLoopInSwaps :many
 SELECT
     swaps.*,
@@ -107,11 +115,27 @@ INSERT INTO loopout_swaps (
     publication_deadline,
     single_sweep,
     payment_timeout,
-    asset_id,
-    asset_edge_node
+    is_asset_swap
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 );
+
+-- name: InsertLoopOutAsset :exec
+INSERT INTO loopout_swaps_assets (
+    swap_hash,
+    asset_id,
+    swap_rfq_id,
+    prepay_rfq_id
+) VALUES (
+    $1, $2, $3, $4
+);
+
+-- name: UpdateLoopOutAssetOffchainPayments :exec
+UPDATE loopout_swaps_assets
+SET
+    asset_amt_paid_swap = $2,
+    asset_amt_paid_prepay = $3
+WHERE swap_hash = $1;
 
 -- name: InsertLoopIn :exec
 INSERT INTO loopin_swaps (

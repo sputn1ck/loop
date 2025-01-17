@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -20,12 +21,13 @@ import (
 	"github.com/lightninglabs/loop/sweep"
 	"github.com/lightninglabs/loop/sweepbatcher"
 	"github.com/lightninglabs/loop/utils"
-	"github.com/lightninglabs/taproot-assets/taprpc/tapchannelrpc"
+	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/rfqmsg"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 const (
@@ -89,9 +91,8 @@ type loopOutSwap struct {
 	// to calculate the total cost of the swap.
 	prepayAmount btcutil.Amount
 
-	swapPaymentChan         chan paymentResult
-	prePaymentChan          chan paymentResult
-	waitForRfqCompletedChan chan interface{}
+	swapPaymentChan chan paymentResult
+	prePaymentChan  chan paymentResult
 
 	wg sync.WaitGroup
 }
@@ -145,8 +146,11 @@ func newLoopOutSwap(globalCtx context.Context, cfg *swapConfig,
 
 	// If we have an asset id, we'll add that to the user agent.
 	if request.AssetId != nil {
-		if request.AssetEdgeNode == nil {
-			return nil, errors.New("asset edge node must be set")
+		if request.AssetPrepayRfqId == nil ||
+			request.AssetSwapRfqId == nil {
+
+			return nil, errors.New("both rfq ids must be set for " +
+				"asset swaps")
 		}
 
 		request.Initiator += " asset_out"
@@ -218,8 +222,14 @@ func newLoopOutSwap(globalCtx context.Context, cfg *swapConfig,
 		},
 		OutgoingChanSet: chanSet,
 		PaymentTimeout:  request.PaymentTimeout,
-		AssetId:         request.AssetId,
-		AssetEdgeNode:   request.AssetEdgeNode,
+	}
+
+	if request.AssetId != nil {
+		contract.AssetSwapInfo = &loopdb.LoopOutAssetSwap{
+			AssetId:     request.AssetId,
+			PrepayRfqId: request.AssetPrepayRfqId,
+			SwapRfqId:   request.AssetSwapRfqId,
+		}
 	}
 
 	swapKit := newSwapKit(
@@ -346,6 +356,10 @@ func (s *loopOutSwap) sendUpdate(ctx context.Context) error {
 		info.OutgoingChanSet = outgoingChanSet
 	}
 
+	if s.AssetSwapInfo != nil {
+		info.AssetSwapInfo = s.AssetSwapInfo
+	}
+
 	select {
 	case s.statusChan <- *info:
 	case <-ctx.Done():
@@ -427,7 +441,7 @@ func (s *loopOutSwap) executeAndFinalize(globalCtx context.Context) error {
 		case result := <-s.swapPaymentChan:
 			s.swapPaymentChan = nil
 
-			err := s.handlePaymentResult(result, true)
+			err := s.handlePaymentResult(globalCtx, result, true)
 			if err != nil {
 				return err
 			}
@@ -443,7 +457,7 @@ func (s *loopOutSwap) executeAndFinalize(globalCtx context.Context) error {
 		case result := <-s.prePaymentChan:
 			s.prePaymentChan = nil
 
-			err := s.handlePaymentResult(result, false)
+			err := s.handlePaymentResult(globalCtx, result, false)
 			if err != nil {
 				return err
 			}
@@ -476,8 +490,8 @@ func (s *loopOutSwap) executeAndFinalize(globalCtx context.Context) error {
 // handlePaymentResult processes the result of a payment attempt. If the
 // payment was successful and this is the main swap payment, the cost of the
 // swap is updated.
-func (s *loopOutSwap) handlePaymentResult(result paymentResult,
-	swapPayment bool) error {
+func (s *loopOutSwap) handlePaymentResult(ctx context.Context,
+	result paymentResult, swapPayment bool) error {
 
 	switch {
 	// If our result has a non-nil error, our status will be nil. In this
@@ -503,6 +517,17 @@ func (s *loopOutSwap) handlePaymentResult(result paymentResult,
 		// is reflected in the fee. We add the off-chain fee for both
 		// the swap payment and the prepay.
 		s.cost.Offchain += result.status.Fee.ToSatoshis()
+
+		// If this is an asset payment, we'll write the asset amounts
+		// to the swap.
+		if s.AssetSwapInfo != nil {
+			err := s.fillAssetOffchainPaymentResult(
+				ctx, result, swapPayment,
+			)
+			if err != nil {
+				return err
+			}
+		}
 
 		return nil
 
@@ -646,36 +671,31 @@ func (s *loopOutSwap) payInvoices(ctx context.Context) {
 		s.log.Infof("Server recommended routing plugin: %v", pluginType)
 	}
 
-	if s.AssetId != nil {
-		s.waitForRfqCompletedChan = make(chan interface{})
-	}
-
 	// Use the recommended routing plugin.
+	var assetSwapRfq []byte
+	if s.AssetSwapInfo != nil {
+		assetSwapRfq = s.AssetSwapInfo.SwapRfqId
+	}
 	s.swapPaymentChan = s.payInvoice(
 		ctx, s.SwapInvoice, s.MaxSwapRoutingFee,
 		s.LoopOutContract.OutgoingChanSet,
 		s.LoopOutContract.PaymentTimeout, pluginType, true,
+		assetSwapRfq,
 	)
-
-	// We'll need to wait for the RFQ to be completed before we can start
-	// paying the prepay invoice. This is due to a timing bug in tapd that
-	// on simultaneous RFQs return the same quote for both RFQs.
-	if s.AssetId != nil {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.waitForRfqCompletedChan:
-		}
-	}
 
 	// Pay the prepay invoice. Won't use the routing plugin here as the
 	// prepay is trivially small and shouldn't normally need any help. We
 	// are sending it over the same channel as the loop out payment.
 	s.log.Infof("Sending prepayment %v", s.PrepayInvoice)
+	var assetPrepayRfq []byte
+	if s.AssetSwapInfo != nil {
+		assetPrepayRfq = s.AssetSwapInfo.PrepayRfqId
+	}
 	s.prePaymentChan = s.payInvoice(
 		ctx, s.PrepayInvoice, s.MaxPrepayRoutingFee,
 		s.LoopOutContract.OutgoingChanSet,
 		s.LoopOutContract.PaymentTimeout, RoutingPluginNone, false,
+		assetPrepayRfq,
 	)
 }
 
@@ -704,7 +724,7 @@ func (p paymentResult) failure() error {
 func (s *loopOutSwap) payInvoice(ctx context.Context, invoice string,
 	maxFee btcutil.Amount, outgoingChanIds loopdb.ChannelSet,
 	paymentTimeout time.Duration, pluginType RoutingPluginType,
-	reportPluginResult bool) chan paymentResult {
+	reportPluginResult bool, rfqId []byte) chan paymentResult {
 
 	resultChan := make(chan paymentResult)
 	sendResult := func(result paymentResult) {
@@ -719,15 +739,12 @@ func (s *loopOutSwap) payInvoice(ctx context.Context, invoice string,
 
 		status, err := s.payInvoiceAsync(
 			ctx, invoice, maxFee, outgoingChanIds, paymentTimeout,
-			pluginType, reportPluginResult,
+			pluginType, reportPluginResult, rfqId,
 		)
 		if err != nil {
 			result.err = err
 			// On error, we close the asset channel to signal that
 			// we are done and to not block the payment loop.
-			if s.waitForRfqCompletedChan != nil {
-				close(s.waitForRfqCompletedChan)
-			}
 			sendResult(result)
 			return
 		}
@@ -749,79 +766,12 @@ func (s *loopOutSwap) payInvoice(ctx context.Context, invoice string,
 	return resultChan
 }
 
-func (s *loopOutSwap) payInvoiceWithAssetClient(ctx context.Context,
-	invoice string) (*lndclient.PaymentStatus, error) {
-
-	totalPaymentTimeout := s.executeConfig.totalPaymentTimeout
-
-	sendReq := &routerrpc.SendPaymentRequest{
-		PaymentRequest: invoice,
-		TimeoutSeconds: int32(totalPaymentTimeout.Seconds()),
-		FeeLimitMsat:   1_000_000,
-	}
-
-	paymentStream, err := s.assets.SendPayment(
-		ctx, &tapchannelrpc.SendPaymentRequest{
-			AssetId:        s.AssetId,
-			PeerPubkey:     s.AssetEdgeNode,
-			PaymentRequest: sendReq,
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	// We want to receive the accepted quote message first, so we know how
-	// many assets we're going to pay.
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			msg, err := paymentStream.Recv()
-			if err != nil {
-				return nil, err
-			}
-
-			switch msg.GetResult().(type) {
-			case *tapchannelrpc.SendPaymentResponse_AcceptedSellOrder:
-				quote := msg.GetAcceptedSellOrder()
-				log.Infof("Accepted quote: %v",
-					quote.AssetAmount)
-
-				if s.waitForRfqCompletedChan != nil {
-					close(s.waitForRfqCompletedChan)
-					s.waitForRfqCompletedChan = nil
-				}
-
-			case *tapchannelrpc.SendPaymentResponse_PaymentResult:
-				payRes := msg.GetPaymentResult()
-				if payRes.Status == lnrpc.Payment_SUCCEEDED ||
-					payRes.Status == lnrpc.Payment_FAILED {
-
-					s.log.Infof("Asset Payment result: %v",
-						payRes.Status)
-
-					return &lndclient.PaymentStatus{
-						State: payRes.Status,
-					}, nil
-				}
-			}
-		}
-	}
-}
-
 // payInvoiceAsync is the asynchronously executed part of paying an invoice.
 func (s *loopOutSwap) payInvoiceAsync(ctx context.Context,
 	invoice string, maxFee btcutil.Amount,
 	outgoingChanIds loopdb.ChannelSet, paymentTimeout time.Duration,
-	pluginType RoutingPluginType, reportPluginResult bool) (
+	pluginType RoutingPluginType, reportPluginResult bool, rfqId []byte) (
 	*lndclient.PaymentStatus, error) {
-
-	// If we want to use an asset for the payment, we need to use the asset
-	// client.
-	if s.AssetId != nil {
-		return s.payInvoiceWithAssetClient(ctx, invoice)
-	}
 
 	// Extract hash from payment request. Unfortunately the request
 	// components aren't available directly.
@@ -881,6 +831,21 @@ func (s *loopOutSwap) payInvoiceAsync(ctx context.Context,
 		OutgoingChanIds: outgoingChanIds,
 		Timeout:         paymentTimeout,
 		MaxParts:        s.executeConfig.loopOutMaxParts,
+	}
+
+	// If we want an asset swap, we'll need to set the custom first hop
+	// data.
+	if s.AssetSwapInfo != nil {
+		var rfq rfqmsg.ID
+		copy(rfq[:], rfqId)
+
+		htlc := rfqmsg.NewHtlc(nil, fn.Some(rfq))
+		htlcMapRecords, err := tlv.RecordsToMap(htlc.Records())
+		if err != nil {
+			return nil, err
+		}
+
+		req.FirstHopCustomRecords = htlcMapRecords
 	}
 
 	// Lookup state of the swap payment.
@@ -1083,7 +1048,7 @@ func (s *loopOutSwap) waitForConfirmedHtlc(globalCtx context.Context) (
 			case result := <-s.swapPaymentChan:
 				s.swapPaymentChan = nil
 
-				err := s.handlePaymentResult(result, true)
+				err := s.handlePaymentResult(ctx, result, true)
 				if err != nil {
 					return nil, err
 				}
@@ -1105,7 +1070,7 @@ func (s *loopOutSwap) waitForConfirmedHtlc(globalCtx context.Context) (
 			case result := <-s.prePaymentChan:
 				s.prePaymentChan = nil
 
-				err := s.handlePaymentResult(result, false)
+				err := s.handlePaymentResult(ctx, result, false)
 				if err != nil {
 					return nil, err
 				}
@@ -1504,4 +1469,32 @@ func (s *loopOutSwap) canSweep() bool {
 	}
 
 	return true
+}
+
+func (s *loopOutSwap) fillAssetOffchainPaymentResult(ctx context.Context,
+	result paymentResult, isSwapInvoice bool) error {
+
+	if len(result.status.Htlcs) == 0 {
+		return fmt.Errorf("no htlcs in payment result")
+	}
+
+	// We only expect one htlc in the result.
+	htlc := result.status.Htlcs[0]
+
+	var assetData rfqmsg.JsonHtlc
+
+	err := json.Unmarshal(htlc.Route.CustomChannelData, &assetData)
+	if err != nil {
+		return err
+	}
+
+	assetSendAmt := btcutil.Amount(assetData.Balances[0].Amount)
+	if isSwapInvoice {
+		s.AssetSwapInfo.SwapPaidAmt = assetSendAmt
+		log.Debugf("Asset off-chain payment success: %v", assetSendAmt)
+	} else {
+		s.AssetSwapInfo.PrepayPaidAmt = assetSendAmt
+	}
+
+	return s.store.UpdateLoopOutAssetInfo(ctx, s.hash, s.AssetSwapInfo)
 }

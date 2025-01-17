@@ -342,7 +342,13 @@ message LoopOutRequest {
     be paid in the specified asset using the provided edge node. An Asset client
     must be connected to the loop client to use this feature.
     */
-    AssetLoopOutInfo asset_info = 20;
+    AssetLoopOutRequest asset_info = 20;
+
+    /*
+    The optional RFQ information to use for the swap. If set, the swap will
+    use the provided RFQs to pay for the swap invoice.AbandonSwapRequest
+    */
+    AssetRfqInfo asset_rfq_info = 21;
 }
 
 /*
@@ -546,6 +552,9 @@ message SwapStatus {
 
     // An optional label given to the swap on creation.
     string label = 15;
+
+    // If the swap was an asset swap, the asset information will be returned.
+    AssetLoopOutInfo asset_info = 19;
 }
 
 enum SwapType {
@@ -692,6 +701,9 @@ message ListSwapsFilter {
 
     // If specified on creation, the last hop of the swap.
     bytes loop_in_last_hop = 5;
+
+    // If specified, only returns asset swaps.
+    bool asset_swap_only = 6;
 }
 
 message ListSwapsResponse {
@@ -805,7 +817,7 @@ message QuoteRequest {
     The optional asset information to use for the swap. If set, the quote will
     be returned in the specified asset.
     */
-    AssetLoopOutInfo asset_info = 9;
+    AssetLoopOutRequest asset_info = 9;
 }
 
 message InQuoteResponse {
@@ -871,9 +883,9 @@ message OutQuoteResponse {
     int32 conf_target = 6;
 
     /*
-    The sat amount for the invoice should an asset be used.
+    If the request was for an asset swap, the quote will return
     */
-    int64 invoice_amt_sat = 7;
+    AssetRfqInfo asset_rfq_info = 7;
 }
 
 message ProbeRequest {
@@ -2019,7 +2031,7 @@ message StaticAddressLoopInResponse {
     uint32 payment_timeout_seconds = 11;
 }
 
-message AssetLoopOutInfo {
+message AssetLoopOutRequest {
     /*
     The asset id to use to pay for the swap invoice. If set an
     asset client is needed to set to be able to pay the invoice.
@@ -2032,4 +2044,46 @@ message AssetLoopOutInfo {
     an asset id is set.
     */
     bytes asset_edge_node = 2;
+}
+
+message AssetRfqInfo {
+    /*
+    The Prepay RFQ ID to use to pay for the prepay invoice.
+    */
+    bytes prepay_rfq_id = 1;
+
+    /*
+    The actual asset amt to prepay for the swap invoice.
+    */
+    uint64 prepay_asset_amt = 2;
+
+    /*
+    The Swap RFQ ID to use to pay for the swap invoice.
+    */
+    bytes swap_rfq_id = 3;
+
+    /*
+    The actual asset amt to swap for the swap invoice.
+    */
+    uint64 swap_asset_amt = 4;
+
+    /*
+    The name of the asset to swap.
+    */
+    string asset_name = 5;
+}
+
+message AssetLoopOutInfo {
+    /*
+    The asset id that was used to pay for the swap invoice.
+    */
+    string asset_id = 1;
+    /*
+    The human readable name of the asset.
+    */
+    string asset_name = 2;
+    /*
+    The total asset offchain cost of the swap.
+    */
+    uint64 asset_cost_offchain = 3;
 }

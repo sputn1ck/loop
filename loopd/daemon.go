@@ -694,6 +694,7 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		depositManager:       depositManager,
 		withdrawalManager:    withdrawalManager,
 		staticLoopInManager:  staticLoopInManager,
+		assetClient:          d.assetClient,
 	}
 
 	// Retrieve all currently existing swaps from the database.

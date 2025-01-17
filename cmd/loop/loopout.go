@@ -149,6 +149,10 @@ func loopOut(ctx *cli.Context) error {
 	// element.
 	var outgoingChanSet []uint64
 	if ctx.IsSet("channel") {
+		if ctx.IsSet("asset_id") {
+			return fmt.Errorf("channel flag is not supported when " +
+				"looping out assets")
+		}
 		chanStrings := strings.Split(ctx.String("channel"), ",")
 		for _, chanString := range chanStrings {
 			chanID, err := strconv.ParseUint(chanString, 10, 64)
@@ -201,7 +205,7 @@ func loopOut(ctx *cli.Context) error {
 		}
 	}
 
-	var assetLoopOutInfo *looprpc.AssetLoopOutInfo
+	var assetLoopOutInfo *looprpc.AssetLoopOutRequest
 
 	var assetId []byte
 	if ctx.IsSet("asset_id") {
@@ -222,7 +226,7 @@ func loopOut(ctx *cli.Context) error {
 			return err
 		}
 
-		assetLoopOutInfo = &looprpc.AssetLoopOutInfo{
+		assetLoopOutInfo = &looprpc.AssetLoopOutRequest{
 			AssetId:       assetId,
 			AssetEdgeNode: assetEdgeNode,
 		}
@@ -325,6 +329,7 @@ func loopOut(ctx *cli.Context) error {
 		Initiator:               defaultInitiator,
 		PaymentTimeout:          uint32(paymentTimeout),
 		AssetInfo:               assetLoopOutInfo,
+		AssetRfqInfo:            quote.AssetRfqInfo,
 	})
 	if err != nil {
 		return err

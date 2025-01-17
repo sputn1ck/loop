@@ -39,9 +39,20 @@ func (db *BaseDB) FetchLoopOutSwaps(ctx context.Context) ([]*LoopOut,
 				return err
 			}
 
+			var assetInfo *sqlc.LoopoutSwapsAsset
+			if swap.IsAssetSwap {
+				assetI, err := tx.GetLoopOutSwapAssetInfo(
+					ctx, swap.SwapHash,
+				)
+				if err != nil {
+					return err
+				}
+				assetInfo = &assetI
+			}
+
 			loopOut, err := ConvertLoopOutRow(
 				db.network, sqlc.GetLoopOutSwapRow(swap),
-				updates,
+				updates, assetInfo,
 			)
 			if err != nil {
 				return err
@@ -71,13 +82,22 @@ func (db *BaseDB) FetchLoopOutSwap(ctx context.Context,
 			return err
 		}
 
+		var assetInfo *sqlc.LoopoutSwapsAsset
+		if swap.IsAssetSwap {
+			assetI, err := tx.GetLoopOutSwapAssetInfo(ctx, hash[:])
+			if err != nil {
+				return err
+			}
+			assetInfo = &assetI
+		}
+
 		updates, err := tx.GetSwapUpdates(ctx, swap.SwapHash)
 		if err != nil {
 			return err
 		}
 
 		loopOut, err = ConvertLoopOutRow(
-			db.network, swap, updates,
+			db.network, swap, updates, assetInfo,
 		)
 		if err != nil {
 			return err
@@ -126,7 +146,40 @@ func (db *BaseDB) CreateLoopOut(ctx context.Context, hash lntypes.Hash,
 			return err
 		}
 
+		// If the loop is an asset loop out, we'll also insert the
+		// asset details.
+		if swap.AssetSwapInfo != nil {
+			assetInfo := swap.AssetSwapInfo
+			err = tx.InsertLoopOutAsset(
+				ctx, sqlc.InsertLoopOutAssetParams{
+					SwapHash:    hash[:],
+					AssetID:     assetInfo.AssetId,
+					SwapRfqID:   assetInfo.SwapRfqId,
+					PrepayRfqID: assetInfo.PrepayRfqId,
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
+
 		return nil
+	})
+}
+
+func (db *BaseDB) UpdateLoopOutAssetInfo(ctx context.Context, hash lntypes.Hash,
+	asset *LoopOutAssetSwap) error {
+
+	log.Debugf("Updating asset info for swap %v %v", hash, asset)
+	writeOpts := NewSqlWriteOpts()
+	return db.ExecTx(ctx, writeOpts, func(tx *sqlc.Queries) error {
+		return tx.UpdateLoopOutAssetOffchainPayments(
+			ctx, sqlc.UpdateLoopOutAssetOffchainPaymentsParams{
+				SwapHash:           hash[:],
+				AssetAmtPaidSwap:   int64(asset.SwapPaidAmt),
+				AssetAmtPaidPrepay: int64(asset.PrepayPaidAmt),
+			},
+		)
 	})
 }
 
@@ -499,8 +552,7 @@ func loopOutToInsertArgs(hash lntypes.Hash,
 		MaxPrepayRoutingFee: int64(loopOut.MaxPrepayRoutingFee),
 		PublicationDeadline: loopOut.SwapPublicationDeadline.UTC(),
 		PaymentTimeout:      int32(loopOut.PaymentTimeout.Seconds()),
-		AssetID:             loopOut.AssetId,
-		AssetEdgeNode:       loopOut.AssetEdgeNode,
+		IsAssetSwap:         loopOut.AssetSwapInfo != nil,
 	}
 }
 
@@ -545,7 +597,8 @@ func swapToHtlcKeysInsertArgs(hash lntypes.Hash,
 // ConvertLoopOutRow converts a database row containing a loop out swap to a
 // LoopOut struct.
 func ConvertLoopOutRow(network *chaincfg.Params, row sqlc.GetLoopOutSwapRow,
-	updates []sqlc.SwapUpdate) (*LoopOut, error) {
+	updates []sqlc.SwapUpdate, assetInfo *sqlc.LoopoutSwapsAsset) (*LoopOut,
+	error) {
 
 	htlcKeys, err := fetchHtlcKeys(
 		row.SenderScriptPubkey, row.ReceiverScriptPubkey,
@@ -597,12 +650,20 @@ func ConvertLoopOutRow(network *chaincfg.Params, row sqlc.GetLoopOutSwapRow,
 			PaymentTimeout: time.Duration(
 				row.PaymentTimeout,
 			) * time.Second,
-			AssetId:       row.AssetID,
-			AssetEdgeNode: row.AssetEdgeNode,
 		},
 		Loop: Loop{
 			Hash: swapHash,
 		},
+	}
+
+	if assetInfo != nil {
+		loopOut.Contract.AssetSwapInfo = &LoopOutAssetSwap{
+			AssetId:       assetInfo.AssetID,
+			SwapRfqId:     assetInfo.SwapRfqID,
+			PrepayRfqId:   assetInfo.PrepayRfqID,
+			SwapPaidAmt:   btcutil.Amount(assetInfo.AssetAmtPaidSwap),   // nolint: lll
+			PrepayPaidAmt: btcutil.Amount(assetInfo.AssetAmtPaidPrepay), // nolint: lll
+		}
 	}
 
 	if row.OutgoingChanSet != "" {

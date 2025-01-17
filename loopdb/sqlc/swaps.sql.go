@@ -184,7 +184,7 @@ func (q *Queries) GetLoopInSwaps(ctx context.Context) ([]GetLoopInSwapsRow, erro
 const getLoopOutSwap = `-- name: GetLoopOutSwap :one
 SELECT
     swaps.id, swaps.swap_hash, swaps.preimage, swaps.initiation_time, swaps.amount_requested, swaps.cltv_expiry, swaps.max_miner_fee, swaps.max_swap_fee, swaps.initiation_height, swaps.protocol_version, swaps.label,
-    loopout_swaps.swap_hash, loopout_swaps.dest_address, loopout_swaps.swap_invoice, loopout_swaps.max_swap_routing_fee, loopout_swaps.sweep_conf_target, loopout_swaps.htlc_confirmations, loopout_swaps.outgoing_chan_set, loopout_swaps.prepay_invoice, loopout_swaps.max_prepay_routing_fee, loopout_swaps.publication_deadline, loopout_swaps.single_sweep, loopout_swaps.payment_timeout, loopout_swaps.asset_id, loopout_swaps.asset_edge_node,
+    loopout_swaps.swap_hash, loopout_swaps.dest_address, loopout_swaps.swap_invoice, loopout_swaps.max_swap_routing_fee, loopout_swaps.sweep_conf_target, loopout_swaps.htlc_confirmations, loopout_swaps.outgoing_chan_set, loopout_swaps.prepay_invoice, loopout_swaps.max_prepay_routing_fee, loopout_swaps.publication_deadline, loopout_swaps.single_sweep, loopout_swaps.payment_timeout, loopout_swaps.is_asset_swap,
     htlc_keys.swap_hash, htlc_keys.sender_script_pubkey, htlc_keys.receiver_script_pubkey, htlc_keys.sender_internal_pubkey, htlc_keys.receiver_internal_pubkey, htlc_keys.client_key_family, htlc_keys.client_key_index
 FROM
     swaps
@@ -220,8 +220,7 @@ type GetLoopOutSwapRow struct {
 	PublicationDeadline    time.Time
 	SingleSweep            bool
 	PaymentTimeout         int32
-	AssetID                []byte
-	AssetEdgeNode          []byte
+	IsAssetSwap            bool
 	SwapHash_3             []byte
 	SenderScriptPubkey     []byte
 	ReceiverScriptPubkey   []byte
@@ -258,8 +257,7 @@ func (q *Queries) GetLoopOutSwap(ctx context.Context, swapHash []byte) (GetLoopO
 		&i.PublicationDeadline,
 		&i.SingleSweep,
 		&i.PaymentTimeout,
-		&i.AssetID,
-		&i.AssetEdgeNode,
+		&i.IsAssetSwap,
 		&i.SwapHash_3,
 		&i.SenderScriptPubkey,
 		&i.ReceiverScriptPubkey,
@@ -271,10 +269,33 @@ func (q *Queries) GetLoopOutSwap(ctx context.Context, swapHash []byte) (GetLoopO
 	return i, err
 }
 
+const getLoopOutSwapAssetInfo = `-- name: GetLoopOutSwapAssetInfo :one
+SELECT
+    swap_hash, asset_id, swap_rfq_id, prepay_rfq_id, asset_amt_paid_swap, asset_amt_paid_prepay
+FROM
+    loopout_swaps_assets
+WHERE
+    swap_hash = $1
+`
+
+func (q *Queries) GetLoopOutSwapAssetInfo(ctx context.Context, swapHash []byte) (LoopoutSwapsAsset, error) {
+	row := q.db.QueryRowContext(ctx, getLoopOutSwapAssetInfo, swapHash)
+	var i LoopoutSwapsAsset
+	err := row.Scan(
+		&i.SwapHash,
+		&i.AssetID,
+		&i.SwapRfqID,
+		&i.PrepayRfqID,
+		&i.AssetAmtPaidSwap,
+		&i.AssetAmtPaidPrepay,
+	)
+	return i, err
+}
+
 const getLoopOutSwaps = `-- name: GetLoopOutSwaps :many
 SELECT
     swaps.id, swaps.swap_hash, swaps.preimage, swaps.initiation_time, swaps.amount_requested, swaps.cltv_expiry, swaps.max_miner_fee, swaps.max_swap_fee, swaps.initiation_height, swaps.protocol_version, swaps.label,
-    loopout_swaps.swap_hash, loopout_swaps.dest_address, loopout_swaps.swap_invoice, loopout_swaps.max_swap_routing_fee, loopout_swaps.sweep_conf_target, loopout_swaps.htlc_confirmations, loopout_swaps.outgoing_chan_set, loopout_swaps.prepay_invoice, loopout_swaps.max_prepay_routing_fee, loopout_swaps.publication_deadline, loopout_swaps.single_sweep, loopout_swaps.payment_timeout, loopout_swaps.asset_id, loopout_swaps.asset_edge_node,
+    loopout_swaps.swap_hash, loopout_swaps.dest_address, loopout_swaps.swap_invoice, loopout_swaps.max_swap_routing_fee, loopout_swaps.sweep_conf_target, loopout_swaps.htlc_confirmations, loopout_swaps.outgoing_chan_set, loopout_swaps.prepay_invoice, loopout_swaps.max_prepay_routing_fee, loopout_swaps.publication_deadline, loopout_swaps.single_sweep, loopout_swaps.payment_timeout, loopout_swaps.is_asset_swap,
     htlc_keys.swap_hash, htlc_keys.sender_script_pubkey, htlc_keys.receiver_script_pubkey, htlc_keys.sender_internal_pubkey, htlc_keys.receiver_internal_pubkey, htlc_keys.client_key_family, htlc_keys.client_key_index
 FROM
     swaps
@@ -310,8 +331,7 @@ type GetLoopOutSwapsRow struct {
 	PublicationDeadline    time.Time
 	SingleSweep            bool
 	PaymentTimeout         int32
-	AssetID                []byte
-	AssetEdgeNode          []byte
+	IsAssetSwap            bool
 	SwapHash_3             []byte
 	SenderScriptPubkey     []byte
 	ReceiverScriptPubkey   []byte
@@ -354,8 +374,7 @@ func (q *Queries) GetLoopOutSwaps(ctx context.Context) ([]GetLoopOutSwapsRow, er
 			&i.PublicationDeadline,
 			&i.SingleSweep,
 			&i.PaymentTimeout,
-			&i.AssetID,
-			&i.AssetEdgeNode,
+			&i.IsAssetSwap,
 			&i.SwapHash_3,
 			&i.SenderScriptPubkey,
 			&i.ReceiverScriptPubkey,
@@ -499,10 +518,9 @@ INSERT INTO loopout_swaps (
     publication_deadline,
     single_sweep,
     payment_timeout,
-    asset_id,
-    asset_edge_node
+    is_asset_swap
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 `
 
@@ -519,8 +537,7 @@ type InsertLoopOutParams struct {
 	PublicationDeadline time.Time
 	SingleSweep         bool
 	PaymentTimeout      int32
-	AssetID             []byte
-	AssetEdgeNode       []byte
+	IsAssetSwap         bool
 }
 
 func (q *Queries) InsertLoopOut(ctx context.Context, arg InsertLoopOutParams) error {
@@ -537,8 +554,35 @@ func (q *Queries) InsertLoopOut(ctx context.Context, arg InsertLoopOutParams) er
 		arg.PublicationDeadline,
 		arg.SingleSweep,
 		arg.PaymentTimeout,
+		arg.IsAssetSwap,
+	)
+	return err
+}
+
+const insertLoopOutAsset = `-- name: InsertLoopOutAsset :exec
+INSERT INTO loopout_swaps_assets (
+    swap_hash,
+    asset_id,
+    swap_rfq_id,
+    prepay_rfq_id
+) VALUES (
+    $1, $2, $3, $4
+)
+`
+
+type InsertLoopOutAssetParams struct {
+	SwapHash    []byte
+	AssetID     []byte
+	SwapRfqID   []byte
+	PrepayRfqID []byte
+}
+
+func (q *Queries) InsertLoopOutAsset(ctx context.Context, arg InsertLoopOutAssetParams) error {
+	_, err := q.db.ExecContext(ctx, insertLoopOutAsset,
+		arg.SwapHash,
 		arg.AssetID,
-		arg.AssetEdgeNode,
+		arg.SwapRfqID,
+		arg.PrepayRfqID,
 	)
 	return err
 }
@@ -649,5 +693,24 @@ func (q *Queries) OverrideSwapCosts(ctx context.Context, arg OverrideSwapCostsPa
 		arg.OnchainCost,
 		arg.OffchainCost,
 	)
+	return err
+}
+
+const updateLoopOutAssetOffchainPayments = `-- name: UpdateLoopOutAssetOffchainPayments :exec
+UPDATE loopout_swaps_assets
+SET
+    asset_amt_paid_swap = $2,
+    asset_amt_paid_prepay = $3
+WHERE swap_hash = $1
+`
+
+type UpdateLoopOutAssetOffchainPaymentsParams struct {
+	SwapHash           []byte
+	AssetAmtPaidSwap   int64
+	AssetAmtPaidPrepay int64
+}
+
+func (q *Queries) UpdateLoopOutAssetOffchainPayments(ctx context.Context, arg UpdateLoopOutAssetOffchainPaymentsParams) error {
+	_, err := q.db.ExecContext(ctx, updateLoopOutAssetOffchainPayments, arg.SwapHash, arg.AssetAmtPaidSwap, arg.AssetAmtPaidPrepay)
 	return err
 }

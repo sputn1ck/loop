@@ -19,6 +19,7 @@ import (
 	"github.com/lightninglabs/aperture/l402"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
+	"github.com/lightninglabs/loop/assets"
 	"github.com/lightninglabs/loop/fsm"
 	"github.com/lightninglabs/loop/instantout"
 	"github.com/lightninglabs/loop/instantout/reservation"
@@ -93,6 +94,7 @@ type swapClientServer struct {
 	depositManager       *deposit.Manager
 	withdrawalManager    *withdraw.Manager
 	staticLoopInManager  *loopin.Manager
+	assetClient          *assets.TapdClient
 	swaps                map[lntypes.Hash]loop.SwapInfo
 	subscribers          map[int]chan<- interface{}
 	statusChan           chan loop.SwapInfo
@@ -211,21 +213,33 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 	// If the asset id is set, we need to set the asset amount and asset id
 	// in the request.
 	if in.AssetInfo != nil {
-		if in.AssetInfo.AssetId == nil ||
-			in.AssetInfo.AssetEdgeNode == nil {
+		if in.AssetInfo.AssetId == nil &&
+			len(in.AssetInfo.AssetId) != 32 {
 
 			return nil, fmt.Errorf(
-				"asset id and edge node must both be set",
+				"asset id must be set to a 32 byte value",
 			)
 		}
 
-		req.AssetAmount = btcutil.Amount(in.Amt)
-		req.AssetId = in.AssetInfo.AssetId
-		req.AssetEdgeNode = in.AssetInfo.AssetEdgeNode
+		if in.AssetRfqInfo.PrepayRfqId == nil &&
+			len(in.AssetRfqInfo.PrepayRfqId) != 32 {
 
-		// We'll set the sat amount to zero, as this gets set later
-		// when we calculate the total amount to send.
-		req.Amount = 0
+			return nil, fmt.Errorf(
+				"prepay rfq id must be set to a 32 byte value",
+			)
+		}
+
+		if in.AssetRfqInfo.SwapRfqId == nil &&
+			len(in.AssetRfqInfo.SwapRfqId) != 32 {
+
+			return nil, fmt.Errorf(
+				"swap rfq id must be set to a 32 byte value",
+			)
+		}
+
+		req.AssetId = in.AssetInfo.AssetId
+		req.AssetPrepayRfqId = in.AssetRfqInfo.PrepayRfqId
+		req.AssetSwapRfqId = in.AssetRfqInfo.SwapRfqId
 	}
 
 	switch {
@@ -295,8 +309,8 @@ func toWalletAddrType(addrType looprpc.AddressType) (walletrpc.AddressType,
 	}
 }
 
-func (s *swapClientServer) marshallSwap(loopSwap *loop.SwapInfo) (
-	*looprpc.SwapStatus, error) {
+func (s *swapClientServer) marshallSwap(ctx context.Context,
+	loopSwap *loop.SwapInfo) (*looprpc.SwapStatus, error) {
 
 	var (
 		state         looprpc.SwapState
@@ -369,6 +383,7 @@ func (s *swapClientServer) marshallSwap(loopSwap *loop.SwapInfo) (
 	)
 	var outGoingChanSet []uint64
 	var lastHop []byte
+	var assetInfo *looprpc.AssetLoopOutInfo
 
 	switch loopSwap.SwapType {
 	case swap.TypeIn:
@@ -399,6 +414,23 @@ func (s *swapClientServer) marshallSwap(loopSwap *loop.SwapInfo) (
 
 		outGoingChanSet = loopSwap.OutgoingChanSet
 
+		if loopSwap.AssetSwapInfo != nil {
+			assetName, err := s.assetClient.GetAssetName(
+				ctx, loopSwap.AssetSwapInfo.AssetId,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			assetInfo = &looprpc.AssetLoopOutInfo{
+				AssetId: hex.EncodeToString(loopSwap.AssetSwapInfo.AssetId), // nolint:lll
+				AssetCostOffchain: uint64(
+					loopSwap.AssetSwapInfo.PrepayPaidAmt +
+						loopSwap.AssetSwapInfo.SwapPaidAmt), // nolint:lll
+				AssetName: assetName,
+			}
+		}
+
 	default:
 		return nil, errors.New("unknown swap type")
 	}
@@ -421,6 +453,7 @@ func (s *swapClientServer) marshallSwap(loopSwap *loop.SwapInfo) (
 		Label:            loopSwap.Label,
 		LastHop:          lastHop,
 		OutgoingChanSet:  outGoingChanSet,
+		AssetInfo:        assetInfo,
 	}, nil
 }
 
@@ -431,7 +464,7 @@ func (s *swapClientServer) Monitor(in *looprpc.MonitorRequest,
 	log.Infof("Monitor request received")
 
 	send := func(info loop.SwapInfo) error {
-		rpcSwap, err := s.marshallSwap(&info)
+		rpcSwap, err := s.marshallSwap(server.Context(), &info)
 		if err != nil {
 			return err
 		}
@@ -526,7 +559,7 @@ func (s *swapClientServer) Monitor(in *looprpc.MonitorRequest,
 
 // ListSwaps returns a list of all currently known swaps and their current
 // status.
-func (s *swapClientServer) ListSwaps(_ context.Context,
+func (s *swapClientServer) ListSwaps(ctx context.Context,
 	req *looprpc.ListSwapsRequest) (*looprpc.ListSwapsResponse, error) {
 
 	var (
@@ -549,7 +582,7 @@ func (s *swapClientServer) ListSwaps(_ context.Context,
 			continue
 		}
 
-		rpcSwap, err := s.marshallSwap(&swp)
+		rpcSwap, err := s.marshallSwap(ctx, &swp)
 		if err != nil {
 			return nil, err
 		}
@@ -627,11 +660,17 @@ func filterSwap(swapInfo *loop.SwapInfo, filter *looprpc.ListSwapsFilter) bool {
 		}
 	}
 
+	// If we only want to return asset swaps, we only return swaps that have
+	// an asset id set.
+	if filter.AssetSwapOnly && swapInfo.AssetSwapInfo == nil {
+		return false
+	}
+
 	return true
 }
 
 // SwapInfo returns all known details about a single swap.
-func (s *swapClientServer) SwapInfo(_ context.Context,
+func (s *swapClientServer) SwapInfo(ctx context.Context,
 	req *looprpc.SwapInfoRequest) (*looprpc.SwapStatus, error) {
 
 	swapHash, err := lntypes.MakeHash(req.Id)
@@ -645,7 +684,7 @@ func (s *swapClientServer) SwapInfo(_ context.Context,
 	if !ok {
 		return nil, fmt.Errorf("swap with hash %s not found", req.Id)
 	}
-	return s.marshallSwap(&swp)
+	return s.marshallSwap(ctx, &swp)
 }
 
 // AbandonSwap requests the server to abandon a swap with the given hash.
@@ -741,6 +780,7 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 			return nil, fmt.Errorf(
 				"asset id and edge node must both be set")
 		}
+
 		loopOutQuoteReq.AssetId = req.AssetInfo.AssetId
 		loopOutQuoteReq.AssetEdgeNode = req.AssetInfo.AssetEdgeNode
 	}
@@ -750,14 +790,25 @@ func (s *swapClientServer) LoopOutQuote(ctx context.Context,
 		return nil, err
 	}
 
-	return &looprpc.OutQuoteResponse{
+	response := &looprpc.OutQuoteResponse{
 		HtlcSweepFeeSat: int64(quote.MinerFee),
 		PrepayAmtSat:    int64(quote.PrepayAmount),
 		SwapFeeSat:      int64(quote.SwapFee),
 		SwapPaymentDest: quote.SwapPaymentDest[:],
 		ConfTarget:      confTarget,
-		InvoiceAmtSat:   int64(quote.InvoiceAmtSat),
-	}, nil
+	}
+
+	if quote.LoopOutRfq != nil {
+		response.AssetRfqInfo = &looprpc.AssetRfqInfo{
+			PrepayRfqId:    quote.LoopOutRfq.PrepayRfqId,
+			PrepayAssetAmt: uint64(quote.LoopOutRfq.PrepayAssetAmt),
+			SwapRfqId:      quote.LoopOutRfq.SwapRfqId,
+			SwapAssetAmt:   uint64(quote.LoopOutRfq.SwapAssetAmt),
+			AssetName:      quote.LoopOutRfq.AssetName,
+		}
+	}
+
+	return response, nil
 }
 
 // GetLoopInTerms returns the terms that the server enforces for swaps.
@@ -2055,6 +2106,15 @@ func validateLoopOutRequest(ctx context.Context, lnd lndclient.LightningClient,
 
 	default:
 		return 0, errInvalidAddress
+	}
+
+	// If this is an asset payment, we'll check that we have the necessary
+	// outbound asset capacaity to fulfill the request.
+	if req.AssetInfo != nil {
+		// Todo(sputn1ck) actually check outbound capacity.
+		return validateConfTarget(
+			req.SweepConfTarget, loop.DefaultSweepConfTarget,
+		)
 	}
 
 	// Check that the label is valid.

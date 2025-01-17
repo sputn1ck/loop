@@ -568,6 +568,12 @@ func (s *boltSwapStore) CreateLoopOut(ctx context.Context, hash lntypes.Hash,
 	})
 }
 
+func (db *boltSwapStore) UpdateLoopOutAssetInfo(ctx context.Context, hash lntypes.Hash,
+	asset *LoopOutAssetSwap) error {
+
+	return nil
+}
+
 // CreateLoopIn adds an initiated swap to the store.
 //
 // NOTE: Part of the loopdb.SwapStore interface.

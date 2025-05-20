@@ -73,6 +73,10 @@ const (
 	// ReasonCustomChannelData indicates that the channel is not standard
 	// and should not be used for swaps.
 	ReasonCustomChannelData
+
+	// ReasonIgnored indicates that a channel was explicitly ignored by the
+	// user.
+	ReasonIgnored
 )
 
 // String returns a string representation of a reason.
@@ -122,6 +126,9 @@ func (r Reason) String() string {
 
 	case ReasonLoopInUnreachable:
 		return "loop in unreachable"
+
+	case ReasonIgnored:
+		return "channel ignored"
 
 	default:
 		return "unknown"

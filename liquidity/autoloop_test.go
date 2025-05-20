@@ -1331,6 +1331,9 @@ func TestEasyAutoloop(t *testing.T) {
 			EasyAutoloopTarget:        75000,
 			FeeLimit:                  defaultFeePortion(),
 			FastSwapPublication:       true,
+			IgnoredChannels: []lnwire.ShortChannelID{
+				chanID2, // Ignore the second channel
+			},
 		}
 	)
 
@@ -1881,4 +1884,92 @@ func TestEasyAssetAutoloop(t *testing.T) {
 		c.easyautoloop(step, false)
 		c.stop()
 	})
+
+	// Sub-test 4: 1 normal channel, 1 ignored channel.
+	t.Run("1 normal channel, 1 ignored channel", func(t *testing.T) {
+		normalChan := lndclient.ChannelInfo{
+			Active:        true,
+			ChannelID:     chanID1.ToUint64(),
+			PubKeyBytes:   peer1,
+			LocalBalance:  95000, // Eligible for easy autoloop
+			RemoteBalance: 0,
+			Capacity:      100000,
+		}
+
+		// This channel would also be eligible but will be ignored.
+		ignoredChan := lndclient.ChannelInfo{
+			Active:        true,
+			ChannelID:     chanID2.ToUint64(),
+			PubKeyBytes:   peer2,
+			LocalBalance:  90000, // Eligible for easy autoloop
+			RemoteBalance: 0,
+			Capacity:      100000,
+		}
+
+		channels := []lndclient.ChannelInfo{normalChan, ignoredChan}
+		params := Parameters{
+			Autoloop:                  true,
+			AutoFeeBudget:             36000,
+			AutoFeeRefreshPeriod:      time.Hour * 3,
+			AutoloopBudgetLastRefresh: testBudgetStart,
+			MaxAutoInFlight:           2,
+			FailureBackOff:            time.Hour,
+			SweepConfTarget:           10,
+			HtlcConfTarget:            defaultHtlcConfTarget,
+			EasyAutoloop:              true,
+			EasyAutoloopTarget:        75000, // Target 75% of capacity
+			FeeLimit:                  defaultFeePortion(),
+			FastSwapPublication:       true,
+			IgnoredChannels: []lnwire.ShortChannelID{
+				chanID2, // Ignore the second channel
+			},
+		}
+
+		c := newAutoloopTestCtx(t, params, channels, testRestrictions)
+		c.start()
+
+		expectedSwapAmt := btcutil.Amount(20000)
+
+		// If there's a DestAddr in params, it should be used.
+		// For this test, let's assume no specific DestAddr.
+		normalChanSwap := &loop.OutRequest{
+			Amount:          expectedSwapAmt,
+			OutgoingChanSet: loopdb.ChannelSet{normalChan.ChannelID},
+			Label:           labels.AutoloopLabel(swap.TypeOut),
+			Initiator:       autoloopSwapInitiator,
+		}
+
+		quotesOut := []quoteRequestResp{
+			{
+				request: &loop.LoopOutQuoteRequest{
+					Amount: expectedSwapAmt,
+				},
+				quote: &loop.LoopOutQuote{
+					SwapFee:      1,
+					PrepayAmount: 1,
+					MinerFee:     1,
+				},
+			},
+		}
+
+		expectedOut := []loopOutRequestResp{
+			{
+				request: normalChanSwap,
+				response: &loop.LoopOutSwapInfo{
+					SwapHash: lntypes.Hash{1},
+				},
+			},
+		}
+
+		step := &easyAutoloopStep{
+			minAmt:      1,
+			maxAmt:      50000, // Max server allowable
+			quotesOut:   quotesOut,
+			expectedOut: expectedOut,
+		}
+
+		c.easyautoloop(step, false)
+		c.stop()
+	})
+
 }

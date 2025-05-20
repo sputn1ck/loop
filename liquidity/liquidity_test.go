@@ -689,12 +689,13 @@ func TestSuggestSwaps(t *testing.T) {
 	prepay, routing := testPPMFees(defaultFeePPM, testQuote, expectedAmt)
 
 	tests := []struct {
-		name        string
-		channels    []lndclient.ChannelInfo
-		rules       map[lnwire.ShortChannelID]*SwapRule
-		peerRules   map[route.Vertex]*SwapRule
-		suggestions *Suggestions
-		err         error
+		name            string
+		channels        []lndclient.ChannelInfo
+		rules           map[lnwire.ShortChannelID]*SwapRule
+		peerRules       map[route.Vertex]*SwapRule
+		ignoredChannels []lnwire.ShortChannelID
+		suggestions     *Suggestions
+		err             error
 	}{
 		{
 			name:     "no rules",
@@ -813,6 +814,24 @@ func TestSuggestSwaps(t *testing.T) {
 				DisqualifiedPeers: noPeersDisqualified,
 			},
 		},
+		{
+			name: "ignore channel",
+			channels: []lndclient.ChannelInfo{
+				channel1,
+			},
+			rules: map[lnwire.ShortChannelID]*SwapRule{
+				chanID1: chanRule,
+			},
+			ignoredChannels: []lnwire.ShortChannelID{
+				chanID1,
+			},
+			suggestions: &Suggestions{
+				DisqualifiedChans: map[lnwire.ShortChannelID]Reason{ // nolint: lll
+					chanID1: ReasonIgnored,
+				},
+				DisqualifiedPeers: noPeersDisqualified,
+			},
+		},
 	}
 
 	for _, testCase := range tests {
@@ -829,6 +848,10 @@ func TestSuggestSwaps(t *testing.T) {
 
 			if testCase.peerRules != nil {
 				params.PeerRules = testCase.peerRules
+			}
+
+			if testCase.ignoredChannels != nil {
+				params.IgnoredChannels = testCase.ignoredChannels
 			}
 
 			testSuggestSwaps(

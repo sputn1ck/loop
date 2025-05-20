@@ -597,6 +597,10 @@ func (m *Manager) dispatchBestEasyAutoloopSwap(ctx context.Context) error {
 	usableChannels := make([]lndclient.ChannelInfo, 0, len(channels))
 	localTotal := btcutil.Amount(0)
 	for _, channel := range channels {
+		if channelIsIgnored(m.params, channel) {
+			continue
+		}
+
 		if channelIsCustom(channel) {
 			continue
 		}
@@ -1016,6 +1020,10 @@ func (m *Manager) SuggestSwaps(ctx context.Context) (
 	channelPeers := make(map[uint64]route.Vertex)
 	peerChannels := make(map[route.Vertex]*balances)
 	for _, channel := range channels {
+		if channelIsIgnored(m.params, channel) {
+			continue
+		}
+
 		if channelIsCustom(channel) {
 			continue
 		}
@@ -1073,6 +1081,11 @@ func (m *Manager) SuggestSwaps(ctx context.Context) (
 		balance := newBalances(channel)
 
 		channelID := lnwire.NewShortChanIDFromInt(channel.ChannelID)
+
+		if channelIsIgnored(m.params, channel) {
+			resp.DisqualifiedChans[channelID] = ReasonIgnored
+			continue
+		}
 
 		if channelIsCustom(channel) {
 			resp.DisqualifiedChans[channelID] =
@@ -1810,6 +1823,18 @@ func channelIsCustom(channel lndclient.ChannelInfo) bool {
 	// non-standard channel, such as an asset channel and we
 	// don't want to consider it for swaps.
 	return channel.CustomChannelData != nil
+}
+
+// channelIsIgnored returns true if the channel should be ignored by autoloop.
+func channelIsIgnored(params Parameters, channel lndclient.ChannelInfo) bool {
+	for _, ignoredChannel := range params.IgnoredChannels {
+		scid := lnwire.NewShortChanIDFromInt(channel.ChannelID)
+		if scid == ignoredChannel {
+			return true
+		}
+	}
+
+	return false
 }
 
 // getCustomAssetData returns the asset data for a custom channel.

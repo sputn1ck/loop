@@ -104,6 +104,10 @@ type Parameters struct {
 	// and channel rules map to avoid ambiguity.
 	PeerRules map[route.Vertex]*SwapRule
 
+	// IgnoredChannels is a list of short channel IDs that should be ignored
+	// by autoloop.
+	IgnoredChannels []lnwire.ShortChannelID
+
 	// CustomPaymentCheckInterval is an optional custom interval to use when
 	// checking an autoloop loop out payments' payment status.
 	CustomPaymentCheckInterval time.Duration
@@ -473,6 +477,9 @@ func RpcToParameters(req *clientrpc.LiquidityParameters) (*Parameters,
 		),
 		AssetAutoloopParams: easyAssetParams,
 		FastSwapPublication: req.FastSwapPublication,
+		IgnoredChannels: make(
+			[]lnwire.ShortChannelID, 0, len(req.IgnoredChannels),
+		),
 	}
 
 	if req.AutoloopBudgetRefreshPeriodSec != 0 {
@@ -491,6 +498,13 @@ func RpcToParameters(req *clientrpc.LiquidityParameters) (*Parameters,
 		params.AutoFeeRefreshPeriod = InfiniteDuration
 		params.AutoloopBudgetLastRefresh = time.Unix(
 			int64(req.AutoloopBudgetStartSec), 0)
+	}
+
+	for _, channel := range req.IgnoredChannels {
+		params.IgnoredChannels = append(
+			params.IgnoredChannels,
+			lnwire.NewShortChanIDFromInt(channel),
+		)
 	}
 
 	for _, rule := range req.Rules {
@@ -631,6 +645,12 @@ func ParametersToRpc(cfg Parameters) (*clientrpc.LiquidityParameters,
 	for peer, rule := range cfg.PeerRules {
 		rpcRule := newRPCRule(0, peer[:], rule)
 		rpcCfg.Rules = append(rpcCfg.Rules, rpcRule)
+	}
+
+	for _, channel := range cfg.IgnoredChannels {
+		rpcCfg.IgnoredChannels = append(
+			rpcCfg.IgnoredChannels, uint64(channel.ToUint64()),
+		)
 	}
 
 	return rpcCfg, nil

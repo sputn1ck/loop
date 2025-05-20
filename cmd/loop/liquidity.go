@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/lightninglabs/loop/liquidity"
 	"github.com/lightninglabs/loop/looprpc"
@@ -339,6 +340,11 @@ var setParamsCommand = cli.Command{
 			Usage: "the confirmation target for loop in on-chain " +
 				"htlcs.",
 		},
+		cli.StringFlag{
+			Name: "ignored_channels",
+			Usage: "a comma-separated list of short channel IDs (uint64 format) " +
+				"to be ignored by the autolooper. Use 'clear' to remove all.",
+		},
 		cli.BoolFlag{
 			Name: "easyautoloop",
 			Usage: "set to true to enable easy autoloop, which " +
@@ -555,6 +561,30 @@ func setParams(ctx *cli.Context) error {
 			params.EasyAssetParams[ctx.String("asset_id")] =
 				&looprpc.EasyAssetAutoloopParams{}
 		}
+	}
+
+	if ctx.IsSet("ignored_channels") {
+		val := ctx.String("ignored_channels")
+		if val == "clear" {
+			params.IgnoredChannels = nil
+		} else {
+			parts := strings.Split(val, ",")
+			var ignored []uint64
+			for _, p := range parts {
+				trimmed := strings.TrimSpace(p)
+				if trimmed == "" {
+					continue
+				}
+				scidUint64, err := strconv.ParseUint(trimmed, 10, 64)
+				if err != nil {
+					return fmt.Errorf("invalid short channel ID (expected uint64 format) "+
+						"in ignored_channels: '%s' - %v", p, err)
+				}
+				ignored = append(ignored, scidUint64)
+			}
+			params.IgnoredChannels = ignored
+		}
+		flagSet = true
 	}
 
 	if ctx.IsSet("easyautoloop") {

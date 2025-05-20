@@ -1235,6 +1235,11 @@ message LiquidityParameters {
      * not be able to be batched with other swaps.
      */
     bool fast_swap_publication = 26;
+
+    /*
+    A list of short channel IDs that should be ignored by autoloop.
+    */
+    repeated uint64 ignored_channels = 27;
 }
 
 message EasyAssetAutoloopParams {

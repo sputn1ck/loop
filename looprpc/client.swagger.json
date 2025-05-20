@@ -1300,6 +1300,14 @@
         "fast_swap_publication": {
           "type": "boolean",
           "description": "Set to true to enable fast swap publication. If set, the server will\npublish the HTLC immediately after receiving the swap request. This\nsetting has direct implications on the swap fees, as fast swaps may\nnot be able to be batched with other swaps."
+        },
+        "ignored_channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uint64"
+          },
+          "description": "A list of short channel IDs that should be ignored by autoloop."
         }
       }
     },

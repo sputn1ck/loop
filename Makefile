@@ -30,6 +30,16 @@ TEST_FLAGS = -test.timeout=20m
 
 UNIT := $(GOLIST) | $(XARGS) env $(GOTEST) $(TEST_FLAGS)
 
+# SwapDK variables.
+SWAPDK_PATH        := ./swapdk
+BUILD_DIR       := ./build
+# — WASM —
+WASM_OUT        := $(BUILD_DIR)/swapdk.wasm
+WASM_EXEC       := $(BUILD_DIR)/wasm_exec.js
+# — Mobile —
+IOS_OUT         := $(BUILD_DIR)/Swapdk.xcframework
+ANDROID_OUT     := $(BUILD_DIR)/swapdk.aar
+
 # Linting uses a lot of memory, so keep it under control by limiting the number
 # of workers if requested.
 ifneq ($(workers),)
@@ -112,6 +122,44 @@ unit-postgres:
 unit-postgres-race:
 	@$(call print, "Running unit race tests with postgres.")
 	$(UNIT) -race -tags=test_db_postgres
+
+# ==========
+# SWAPDK
+# ==========
+.PHONY: all wasm ios android mobile clean init-mobile
+
+swapdk: wasm mobile
+
+$(BUILD_DIR):
+	@mkdir -p $@
+
+# ────────────────────────────────────────────────────────────
+# WebAssembly build: produces swapdk.wasm + wasm_exec.js
+# ────────────────────────────────────────────────────────────
+wasm: $(WASM_OUT) $(WASM_EXEC)
+
+$(WASM_OUT): $(shell find $(SWAPDK_PATH) -name '*.go') | $(BUILD_DIR)
+	GOOS=js GOARCH=wasm go build -o $@ $(SWAPDK_PATH)
+
+$(WASM_EXEC): | $(BUILD_DIR)
+	cp "$(shell go env GOROOT)/lib/wasm/wasm_exec.js" $@
+
+# ────────────────────────────────────────────────────────────
+# Mobile (gomobile) targets – requires `go install golang.org/x/mobile/cmd/...@latest`
+# Run `make init-mobile` once after installing gomobile.
+# ────────────────────────────────────────────────────────────
+init-mobile:
+	GO111MODULE=on go install golang.org/x/mobile/cmd/gomobile@latest
+	gomobile init
+
+ios: init-mobile | $(BUILD_DIR)
+	gomobile bind -target=ios -o $(IOS_OUT) $(SWAPDK_PATH)
+
+android: init-mobile | $(BUILD_DIR)
+	gomobile bind -target=android -o $(ANDROID_OUT) $(SWAPDK_PATH)
+
+mobile: ios android
+.PHONY: wasm ios android mobile
 
 # =========
 # UTILITIES

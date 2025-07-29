@@ -19,6 +19,7 @@ import (
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop/staticaddr/deposit"
+	"github.com/lightninglabs/loop/swapdk"
 	staticaddressrpc "github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/input"
@@ -82,7 +83,7 @@ type ManagerConfig struct {
 	ChainNotifier lndclient.ChainNotifierClient
 
 	// Signer is the signer client that is used to sign transactions.
-	Signer lndclient.SignerClient
+	Signer swapdk.SwapDKSigner
 
 	// Store is the store that is used to persist the finalized withdrawal
 	// transactions.

@@ -13,6 +13,7 @@ import (
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
 	"github.com/lightninglabs/loop/fsm"
+	"github.com/lightninglabs/loop/swapdk"
 	staticaddressrpc "github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/walletrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -67,7 +68,7 @@ type ManagerConfig struct {
 	ChainNotifier lndclient.ChainNotifierClient
 
 	// Signer is the signer client that is used to sign transactions.
-	Signer lndclient.SignerClient
+	Signer swapdk.SwapDKSigner
 }
 
 // Manager manages the address state machines.

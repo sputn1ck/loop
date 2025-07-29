@@ -18,6 +18,7 @@ import (
 	"github.com/lightninglabs/loop/fsm"
 	"github.com/lightninglabs/loop/labels"
 	"github.com/lightninglabs/loop/staticaddr/deposit"
+	"github.com/lightninglabs/loop/swapdk"
 	"github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -69,7 +70,7 @@ type Config struct {
 	ChainNotifier lndclient.ChainNotifierClient
 
 	// Signer is the signer client that is used to sign transactions.
-	Signer lndclient.SignerClient
+	Signer swapdk.SwapDKSigner
 
 	// Store is the database store that is used to store static address
 	// loop-in related records.

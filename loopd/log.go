@@ -29,7 +29,7 @@ var (
 )
 
 // log returns active logger.
-func log() btclog.Logger {
+func getLog() btclog.Logger {
 	return *log_.Load()
 }
 
@@ -40,22 +40,22 @@ func setLogger(logger btclog.Logger) {
 
 // tracef logs a message with level TRACE.
 func tracef(format string, params ...interface{}) {
-	log().Tracef(format, params...)
+	getLog().Tracef(format, params...)
 }
 
 // infof logs a message with level INFO.
 func infof(format string, params ...interface{}) {
-	log().Infof(format, params...)
+	getLog().Infof(format, params...)
 }
 
 // warnf logs a message with level WARN.
 func warnf(format string, params ...interface{}) {
-	log().Warnf(format, params...)
+	getLog().Warnf(format, params...)
 }
 
 // errorf logs a message with level ERROR.
 func errorf(format string, params ...interface{}) {
-	log().Errorf(format, params...)
+	getLog().Errorf(format, params...)
 }
 
 // SetupLoggers initializes all package-global logger variables.

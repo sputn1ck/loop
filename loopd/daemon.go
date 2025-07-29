@@ -25,6 +25,7 @@ import (
 	"github.com/lightninglabs/loop/staticaddr/deposit"
 	"github.com/lightninglabs/loop/staticaddr/loopin"
 	"github.com/lightninglabs/loop/staticaddr/withdraw"
+	"github.com/lightninglabs/loop/swapdk"
 	loop_swaprpc "github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightninglabs/loop/sweepbatcher"
 	"github.com/lightninglabs/taproot-assets/taprpc"
@@ -100,6 +101,9 @@ type Daemon struct {
 	restCtxCancel func()
 
 	macaroonService *lndclient.MacaroonService
+
+	swapDKService *swapdk.SwapDKService
+	swapDKServer  *swapDKServer
 }
 
 // New creates a new instance of the loop client daemon.
@@ -655,6 +659,13 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		MaxStaticAddrHtlcBackupFeePercentage: d.cfg.MaxStaticAddrHtlcBackupFeePercentage,
 	}, blockHeight)
 
+	// Create a new SwapDK service.
+	swapDKManager := &swapDKManager{
+		depositManager:    depositManager,
+		withdrawalManager: withdrawalManager,
+	}
+	d.swapDKService = swapdk.NewSwapDKService(swapDKManager)
+
 	var (
 		reservationManager *reservation.Manager
 		instantOutManager  *instantout.Manager
@@ -984,6 +995,18 @@ func (d *Daemon) initialize(withMacaroonService bool) error {
 		}
 	}
 
+	// Start the SwapDK server.
+	d.swapDKServer = newSwapDKServer(d.swapDKService)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		infof("Starting SwapDK server on port 8081")
+		err := http.ListenAndServe(":8081", d.swapDKServer.router)
+		if err != nil {
+			errorf("Error starting SwapDK server: %v", err)
+		}
+	}()
+
 	// Last, start our internal error handler. This will return exactly one
 	// error or nil on the main error channel to inform the caller that
 	// something went wrong or that shutdown is complete. We don't add to
@@ -1081,4 +1104,43 @@ func allowCORS(handler http.Handler, origin string) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// swapDKManager is a wrapper around the static address managers that implements
+// the swapdk.SwapDKManager interface.
+type swapDKManager struct {
+	depositManager    *deposit.Manager
+	withdrawalManager *withdraw.Manager
+}
+
+// GetBalance returns the balance of the static address.
+func (s *swapDKManager) GetBalance(ctx context.Context) (int64, error) {
+	deposits, err := s.depositManager.GetActiveDepositsInState(
+		deposit.Deposited,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	var balance int64
+	for _, d := range deposits {
+		balance += int64(d.Value)
+	}
+
+	return balance, nil
+}
+
+// GetTransactions returns a list of transactions for the static address.
+func (s *swapDKManager) GetTransactions(ctx context.Context) ([]string, error) {
+	withdrawals, err := s.withdrawalManager.GetAllWithdrawals(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var txs []string
+	for _, w := range withdrawals {
+		txs = append(txs, w.TxID.String())
+	}
+
+	return txs, nil
 }

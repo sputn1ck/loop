@@ -83,6 +83,29 @@ build:
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o loop-debug $(LDFLAGS) $(PKG)/cmd/loop
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o loopd-debug $(LDFLAGS) $(PKG)/cmd/loopd
 
+WASM_LOOP_OUT := bin/wasm
+WASMSQLITE_DIR := $(shell go list -m -f '{{.Dir}}' \
+	github.com/lightninglabs/go-wasmsqlite 2>/dev/null)
+
+wasm-loop: #? Build the browser Loop runtime and flat worker asset set
+	@$(call print, "Building the browser Loop runtime.")
+	$(RM) -r $(WASM_LOOP_OUT)
+	mkdir -p $(WASM_LOOP_OUT)
+	GOOS=js GOARCH=wasm $(GOBUILD) -trimpath -ldflags="-s -w" \
+		-o $(WASM_LOOP_OUT)/loop-wasm.wasm ./cmd/loop-wasm
+	gzip -9 -c $(WASM_LOOP_OUT)/loop-wasm.wasm \
+		> $(WASM_LOOP_OUT)/loop-wasm.wasm.gz
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" $(WASM_LOOP_OUT)/
+	cp $(WASMSQLITE_DIR)/assets/sqlite3.js $(WASM_LOOP_OUT)/
+	cp $(WASMSQLITE_DIR)/assets/sqlite3.wasm $(WASM_LOOP_OUT)/
+	cp $(WASMSQLITE_DIR)/assets/sqlite3-opfs-async-proxy.js \
+		$(WASM_LOOP_OUT)/
+	cp $(WASMSQLITE_DIR)/bridge/sqlite-bridge.js $(WASM_LOOP_OUT)/
+	cp $(WASMSQLITE_DIR)/bridge/sqlite-worker.js $(WASM_LOOP_OUT)/
+	cp sdk/wasm/web/loop-wasm-worker.js $(WASM_LOOP_OUT)/
+	# Module-cache assets can be read-only. Keep the packaged copies mutable.
+	chmod -R u+w $(WASM_LOOP_OUT)
+
 install:
 	@$(call print, "Installing loop and loopd.")
 	$(GOINSTALL) -tags="${tags}" $(LDFLAGS) $(PKG)/cmd/loop

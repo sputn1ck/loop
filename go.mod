@@ -12,13 +12,14 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/fortytw2/leaktest v1.3.0
-	github.com/golang-migrate/migrate/v4 v4.17.0
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0
+	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/lib/pq v1.10.9
 	github.com/lightninglabs/aperture v0.4.0
+	github.com/lightninglabs/go-wasmsqlite v0.0.0-20260627090804-0dce68fc5287
 	github.com/lightninglabs/lndclient v0.21.0-2
 	github.com/lightninglabs/loop/looprpc v1.0.7
 	github.com/lightninglabs/loop/swapserverrpc v1.0.14

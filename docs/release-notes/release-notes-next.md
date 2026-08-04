@@ -2,6 +2,12 @@
 
 #### New Features
 
+* Added externally paid Loop Outs that expose their swap and prepay invoices
+  while retaining restart-safe sweep recovery.
+* Added a packaged browser WASM worker and Promise-based Loop Out API using
+  OPFS SQLite, Esplora, bufconn, and CORS-safelisted JSON requests to the
+  existing server gRPC-Gateway.
+
 #### Breaking Changes
 
 #### Bug Fixes

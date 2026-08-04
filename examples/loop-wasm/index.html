@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Loop Out · Browser WASM demo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to swap controls</a>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Browser WASM demo</p>
+      <h1>Loop Out, without a local lnd daemon</h1>
+      <p class="lede">
+        Pay Lightning invoices with an external wallet. The embedded Loop
+        client watches Esplora and sweeps to your Bitcoin address.
+      </p>
+    </div>
+    <div class="runtime-summary" aria-live="polite">
+      <span class="status-dot" id="runtime-dot"></span>
+      <span id="runtime-status">Runtime stopped</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="preflight card" aria-labelledby="preflight-title">
+      <div>
+        <p class="step-label">Before you start</p>
+        <h2 id="preflight-title">Browser readiness</h2>
+      </div>
+      <ul class="check-list" id="preflight-list"></ul>
+    </section>
+
+    <section class="card" aria-labelledby="config-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 1</p>
+          <h2 id="config-title">Configure the runtime</h2>
+        </div>
+        <div class="button-row">
+          <button class="button primary" id="start-button" type="button">
+            Start runtime
+          </button>
+          <button class="button quiet" id="stop-button" type="button"
+                  disabled>
+            Stop
+          </button>
+        </div>
+      </div>
+
+      <form id="config-form" class="form-grid">
+        <label>
+          <span>Bitcoin network</span>
+          <select id="network" name="network">
+            <option value="testnet4" selected>Testnet4</option>
+            <option value="signet">Signet</option>
+            <option value="testnet3">Testnet3</option>
+            <option value="regtest">Regtest</option>
+            <option value="mainnet">Mainnet</option>
+          </select>
+        </label>
+        <label>
+          <span>Database path</span>
+          <input id="database-path" name="database_path"
+                 value="loop-browser.db" required>
+          <small>Stable name in browser OPFS.</small>
+        </label>
+        <label class="wide">
+          <span>Esplora API base URL</span>
+          <input id="esplora-url" name="esplora_url" type="url"
+                 placeholder="https://esplora.example/api" required>
+        </label>
+        <label class="wide">
+          <span>Loop server gRPC-Gateway URL</span>
+          <input id="server-url" name="loop_server_url" type="url"
+                 placeholder="https://loop.example" required>
+          <small>
+            Uses the server's existing gRPC-Gateway over HTTP(S); no custom
+            browser RPC listener is involved. Production endpoints should use
+            HTTPS.
+          </small>
+        </label>
+        <label class="wide secret-field">
+          <span>Wallet seed (hex, 16–64 bytes)</span>
+          <span class="inline-input">
+            <input id="seed" name="seed" type="password"
+                   autocomplete="off" spellcheck="false" required>
+            <button class="button quiet" id="reveal-seed" type="button"
+                    aria-pressed="false">Show</button>
+            <button class="button quiet" id="generate-seed" type="button">
+              Generate
+            </button>
+          </span>
+          <small>
+            Never persisted by this page. Keep it with an encrypted recovery
+            bundle before relying on a pending swap.
+          </small>
+        </label>
+
+        <details class="wide advanced">
+          <summary>Advanced runtime settings</summary>
+          <div class="form-grid details-grid">
+            <label>
+              <span>L402 maximum (sat)</span>
+              <input id="l402-max" type="number" value="1000" min="1"
+                     step="1" required>
+            </label>
+            <label>
+              <span>Esplora poll interval (ms)</span>
+              <input id="poll-interval" type="number" value="5000"
+                     min="250" step="250" required>
+            </label>
+            <label class="wide">
+              <span>Worker URL</span>
+              <input id="worker-url"
+                     value="../../bin/wasm/loop-wasm-worker.js" required>
+            </label>
+          </div>
+        </details>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="swap-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 2</p>
+          <h2 id="swap-title">Quote and start a Loop Out</h2>
+        </div>
+        <button class="button quiet" id="terms-button" type="button"
+                disabled>Refresh terms</button>
+      </div>
+
+      <p class="muted" id="terms-summary">
+        Start the runtime to load current server terms.
+      </p>
+      <form id="swap-form" class="form-grid">
+        <label>
+          <span>Amount (sat)</span>
+          <input id="amount" type="number" min="1" step="1" required>
+        </label>
+        <label>
+          <span>Sweep confirmation target</span>
+          <input id="conf-target" type="number" value="6" min="2"
+                 step="1" required>
+        </label>
+        <label>
+          <span>Publication window (minutes)</span>
+          <input id="publication-window" type="number" value="30" min="5"
+                 step="5" required>
+        </label>
+        <label>
+          <span>Label</span>
+          <input id="swap-label" maxlength="500"
+                 placeholder="browser loop out">
+        </label>
+        <label class="wide">
+          <span>External Bitcoin destination</span>
+          <input id="destination" autocomplete="off" spellcheck="false"
+                 placeholder="Address for the selected network" required>
+        </label>
+      </form>
+
+      <div class="action-strip">
+        <button class="button primary" id="quote-button" type="button"
+                disabled>Get quote</button>
+        <button class="button accent" id="loop-out-button" type="button"
+                disabled>Initiate Loop Out</button>
+        <p class="muted" id="quote-hint">
+          A fresh quote is required before initiation.
+        </p>
+      </div>
+
+      <div class="quote-panel" id="quote-panel" hidden>
+        <div>
+          <span>Server fee</span>
+          <strong id="quote-swap-fee">—</strong>
+        </div>
+        <div>
+          <span>Prepay amount</span>
+          <strong id="quote-prepay">—</strong>
+        </div>
+        <div>
+          <span>Estimated sweep fee</span>
+          <strong id="quote-sweep-fee">—</strong>
+        </div>
+        <div>
+          <span>Publication deadline</span>
+          <strong id="quote-deadline">—</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="card invoices-section" id="invoices-section"
+             aria-labelledby="invoices-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 3</p>
+          <h2 id="invoices-title">Pay both Lightning invoices</h2>
+        </div>
+        <span class="pill">External payment</span>
+      </div>
+      <p class="callout">
+        Both invoices are required. Keep this tab open after payment: the
+        embedded client must watch the HTLC and publish the sweep.
+      </p>
+      <div class="invoice-grid">
+        <article class="invoice-card">
+          <div class="invoice-title">
+            <span class="number">1</span>
+            <div>
+              <h3>Prepay invoice</h3>
+              <p>Small server prepayment</p>
+            </div>
+          </div>
+          <code id="prepay-invoice"></code>
+          <div class="button-row">
+            <button class="button quiet invoice-copy" type="button"
+                    data-invoice="prepay">Copy</button>
+            <a class="button quiet invoice-open" data-invoice="prepay"
+               href="#">Open wallet</a>
+            <button class="button quiet invoice-webln" type="button"
+                    data-invoice="prepay">Pay with WebLN</button>
+          </div>
+          <p class="payment-note" id="prepay-payment-note">
+            Payment status is reported by your Lightning wallet.
+          </p>
+        </article>
+        <article class="invoice-card featured">
+          <div class="invoice-title">
+            <span class="number">2</span>
+            <div>
+              <h3>Swap invoice</h3>
+              <p>Main Loop Out payment</p>
+            </div>
+          </div>
+          <code id="swap-invoice"></code>
+          <div class="button-row">
+            <button class="button quiet invoice-copy" type="button"
+                    data-invoice="swap">Copy</button>
+            <a class="button quiet invoice-open" data-invoice="swap"
+               href="#">Open wallet</a>
+            <button class="button quiet invoice-webln" type="button"
+                    data-invoice="swap">Pay with WebLN</button>
+          </div>
+          <p class="payment-note" id="swap-payment-note">
+            Payment status is reported by your Lightning wallet.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="status-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 4</p>
+          <h2 id="status-title">Monitor the sweep</h2>
+        </div>
+        <span class="state-badge" id="swap-state">No active swap</span>
+      </div>
+      <dl class="swap-meta">
+        <div><dt>Swap ID</dt><dd id="swap-id">—</dd></div>
+        <div><dt>HTLC address</dt><dd id="htlc-address">—</dd></div>
+        <div><dt>Failure reason</dt><dd id="failure-reason">—</dd></div>
+      </dl>
+      <ol class="timeline" id="timeline" aria-live="polite">
+        <li class="empty">Runtime updates will appear here.</li>
+      </ol>
+    </section>
+
+    <section class="card recovery-card" aria-labelledby="recovery-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Recovery</p>
+          <h2 id="recovery-title">Protect pending swaps</h2>
+        </div>
+      </div>
+      <div class="danger-callout" role="note">
+        <strong>Recovery data is a high-value secret</strong>
+        <p>
+          The runtime returns plaintext in memory. This page will only download
+          it after authenticated AES-GCM encryption with your passphrase. The
+          bundle contains the wallet seed, swap database, and possibly a
+          reusable L402 credential.
+        </p>
+      </div>
+      <div class="form-grid recovery-passwords">
+        <label>
+          <span>Recovery passphrase</span>
+          <input id="recovery-passphrase" type="password"
+                 autocomplete="new-password" minlength="12">
+          <small>Use a unique passphrase of at least 12 characters.</small>
+        </label>
+        <label>
+          <span>Confirm passphrase</span>
+          <input id="recovery-passphrase-confirm" type="password"
+                 autocomplete="new-password" minlength="12">
+        </label>
+      </div>
+      <div class="recovery-actions">
+        <button class="button danger" id="export-button" type="button"
+                disabled>Export encrypted bundle</button>
+        <label class="file-button">
+          <span class="button quiet">Choose encrypted bundle</span>
+          <input id="recovery-file" type="file"
+                 accept="application/json,.json">
+        </label>
+        <label class="restore-passphrase">
+          <span>Import passphrase</span>
+          <input id="restore-passphrase" type="password"
+                 autocomplete="current-password" minlength="12">
+        </label>
+        <button class="button quiet" id="restore-button" type="button"
+                disabled>Restore into fresh database</button>
+      </div>
+      <p class="muted" id="recovery-file-name">No recovery file selected.</p>
+    </section>
+
+    <section class="card log-card" aria-labelledby="log-title">
+      <div class="section-heading">
+        <h2 id="log-title">Activity</h2>
+        <button class="button quiet" id="clear-log" type="button">
+          Clear
+        </button>
+      </div>
+      <ol id="activity-log" class="activity-log" aria-live="polite"></ol>
+    </section>
+  </main>
+
+  <section class="l402-panel" id="l402-panel" role="dialog"
+           aria-modal="true" aria-labelledby="l402-title" hidden>
+    <div class="l402-dialog">
+      <p class="step-label">Server authentication</p>
+      <h2 id="l402-title">Pay the L402 challenge</h2>
+      <p>
+        This is separate from the two swap invoices. The runtime needs the
+        32-byte payment preimage to construct and persist its authorization.
+      </p>
+      <code id="l402-invoice"></code>
+      <div class="button-row">
+        <button class="button quiet" id="copy-l402" type="button">Copy</button>
+        <button class="button primary" id="pay-l402-webln" type="button">
+          Pay with WebLN
+        </button>
+      </div>
+      <label>
+        <span>Or enter payment preimage (64 hex characters)</span>
+        <input id="l402-preimage" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="button-row">
+        <button class="button accent" id="submit-l402" type="button">
+          Submit preimage
+        </button>
+        <button class="button quiet" id="reject-l402" type="button">
+          Cancel startup
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

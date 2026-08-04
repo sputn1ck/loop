@@ -394,6 +394,12 @@ message LoopOutRequest {
     use the provided RFQs to pay for the swap invoice.
     */
     AssetRfqInfo asset_rfq_info = 21;
+
+    /*
+    A flag indicating that the caller will pay the swap and prepay invoices
+    externally. Loop will not dispatch or track these payments through lnd.
+    */
+    bool external_payments = 22;
 }
 
 /*
@@ -514,6 +520,15 @@ message SwapResponse {
 
     // A human-readable message received from the loop server.
     string server_message = 6;
+
+    // The main Lightning invoice for a loop out.
+    string swap_invoice = 8;
+
+    // The prepayment Lightning invoice for a loop out.
+    string prepay_invoice = 9;
+
+    // Whether the loop out invoices must be paid and tracked externally.
+    bool external_payments = 10;
 }
 
 message MonitorRequest {
@@ -607,6 +622,15 @@ message SwapStatus {
 
     // If the swap was an asset swap, the asset information will be returned.
     AssetLoopOutInfo asset_info = 19;
+
+    // The main Lightning invoice for an externally paid loop out.
+    string swap_invoice = 21;
+
+    // The prepayment Lightning invoice for an externally paid loop out.
+    string prepay_invoice = 22;
+
+    // Whether the loop out invoices are paid and tracked externally.
+    bool external_payments = 23;
 }
 
 enum SwapType {

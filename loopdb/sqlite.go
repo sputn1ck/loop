@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,18 +11,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
-	sqlite_migrate "github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
 	"github.com/lightningnetwork/lnd/zpay32"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite" // Register relevant drivers.
-)
-
-const (
-	// sqliteOptionPrefix is the string prefix sqlite uses to set various
-	// options. This is used in the following format:
-	//   * sqliteOptionPrefix || option_name = option_value.
-	sqliteOptionPrefix = "_pragma"
 )
 
 // SqliteConfig holds all the config arguments needed to interact with our
@@ -51,54 +41,20 @@ func NewSqliteStore(cfg *SqliteConfig, network *chaincfg.Params) (*SqliteSwapSto
 	// The set of pragma options are accepted using query options. For now
 	// we only want to ensure that foreign key constraints are properly
 	// enforced.
-	pragmaOptions := []struct {
-		name  string
-		value string
-	}{
-		{
-			name:  "foreign_keys",
-			value: "on",
-		},
-		{
-			name:  "journal_mode",
-			value: "WAL",
-		},
-		{
-			name:  "busy_timeout",
-			value: "5000",
-		},
-		{
-			// With the WAL mode, this ensures that we also do an
-			// extra WAL sync after each transaction. The normal
-			// sync mode skips this and gives better performance,
-			// but risks durability.
-			name:  "synchronous",
-			value: "full",
-		},
-		{
-			// This is used to ensure proper durability for users
-			// running on Mac OS. It uses the correct fsync system
-			// call to ensure items are fully flushed to disk.
-			name:  "fullfsync",
-			value: "true",
-		},
-	}
-	sqliteOptions := make(url.Values)
-	for _, option := range pragmaOptions {
-		sqliteOptions.Add(
-			sqliteOptionPrefix,
-			fmt.Sprintf("%v=%v", option.name, option.value),
-		)
-	}
+	pragmaOptions := []string{
+		"foreign_keys=on",
+		"journal_mode=WAL",
+		"busy_timeout=5000",
 
-	// Construct the DSN which is just the database file name, appended
-	// with the series of pragma options as a query URL string. For more
-	// details on the formatting here, see the modernc.org/sqlite docs:
-	// https://pkg.go.dev/modernc.org/sqlite#Driver.Open.
-	dsn := fmt.Sprintf(
-		"%v?%v", cfg.DatabaseFileName, sqliteOptions.Encode(),
-	)
-	db, err := sql.Open("sqlite", dsn)
+		// With WAL mode, this requests an extra sync after each
+		// transaction rather than trading durability for performance.
+		"synchronous=full",
+
+		// This selects the durable fsync implementation on macOS. The
+		// browser driver ignores this native filesystem hint.
+		"fullfsync=true",
+	}
+	db, err := openSqliteDatabase(cfg, pragmaOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -110,9 +66,7 @@ func NewSqliteStore(cfg *SqliteConfig, network *chaincfg.Params) (*SqliteSwapSto
 		//
 		// First, we'll need to open up a new migration instance for
 		// our current target database: sqlite.
-		driver, err := sqlite_migrate.WithInstance(
-			db, &sqlite_migrate.Config{},
-		)
+		driver, err := newSqliteMigrationDriver(db)
 		if err != nil {
 			return nil, err
 		}

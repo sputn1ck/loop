@@ -66,6 +66,10 @@ type LoopOutContract struct {
 	// attempt.
 	PaymentTimeout time.Duration
 
+	// ExternalPayments specifies that the swap and prepay invoices are paid
+	// by the caller instead of through lnd's router.
+	ExternalPayments bool
+
 	// AssetSwapInfo contains information, should the loop out swpa be
 	// paid via an asset channel.
 	AssetSwapInfo *LoopOutAssetSwap
@@ -235,6 +239,17 @@ func deserializeLoopOutContract(value []byte, chainParams *chaincfg.Params) (
 	}
 	contract.SwapPublicationDeadline = time.Unix(0, deadlineNano)
 
+	// ExternalPayments was appended to the legacy contract encoding. Older
+	// contracts end after the publication deadline and retain the original
+	// behavior of paying through lnd.
+	if r.Len() == 0 {
+		return &contract, nil
+	}
+
+	if err := binary.Read(r, byteOrder, &contract.ExternalPayments); err != nil {
+		return nil, err
+	}
+
 	return &contract, nil
 }
 
@@ -321,6 +336,10 @@ func serializeLoopOutContract(swap *LoopOutContract) (
 
 	err = binary.Write(&b, byteOrder, swap.SwapPublicationDeadline.UnixNano())
 	if err != nil {
+		return nil, err
+	}
+
+	if err := binary.Write(&b, byteOrder, swap.ExternalPayments); err != nil {
 		return nil, err
 	}
 

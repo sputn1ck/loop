@@ -205,6 +205,7 @@ func newLoopOutSwap(globalCtx context.Context, cfg *swapConfig,
 		PrepayInvoice:           swapResp.prepayInvoice,
 		MaxPrepayRoutingFee:     request.MaxPrepayRoutingFee,
 		SwapPublicationDeadline: request.SwapPublicationDeadline,
+		ExternalPayments:        request.ExternalPayments,
 		SwapContract: loopdb.SwapContract{
 			InitiationHeight: currentHeight,
 			InitiationTime:   initiationTime,
@@ -362,6 +363,10 @@ func (s *loopOutSwap) sendUpdate(ctx context.Context) error {
 		info.AssetSwapInfo = s.AssetSwapInfo
 	}
 
+	info.SwapInvoice = s.SwapInvoice
+	info.PrepayInvoice = s.PrepayInvoice
+	info.ExternalPayments = s.ExternalPayments
+
 	select {
 	case s.statusChan <- *info:
 	case <-ctx.Done():
@@ -473,6 +478,18 @@ func (s *loopOutSwap) executeAndFinalize(globalCtx context.Context) error {
 		case <-globalCtx.Done():
 			return globalCtx.Err()
 		}
+	}
+
+	if s.ExternalPayments && s.state == loopdb.StateSuccess {
+		_, _, _, swapAmount, err := swap.DecodeInvoice(
+			s.lnd.ChainParams, s.SwapInvoice,
+		)
+		if err != nil {
+			return err
+		}
+
+		s.cost.Server = s.prepayAmount + swapAmount -
+			s.AmountRequested
 	}
 
 	// Mark swap completed in store.
@@ -657,6 +674,14 @@ func (s *loopOutSwap) persistState(ctx context.Context) error {
 
 // payInvoices pays both swap invoices.
 func (s *loopOutSwap) payInvoices(ctx context.Context) {
+	if s.ExternalPayments {
+		s.log.Infof("Waiting for caller to pay swap and prepay invoices")
+		s.swapPaymentChan = nil
+		s.prePaymentChan = nil
+
+		return
+	}
+
 	// Pay the swap invoice.
 	s.log.Infof("Sending swap payment %v", s.SwapInvoice)
 
@@ -1185,11 +1210,18 @@ func (s *loopOutSwap) waitForHtlcSpendConfirmedV2(globalCtx context.Context,
 	// Track our payment status so that we can detect whether our off chain
 	// htlc is settled. We track this information to determine whether it is
 	// necessary to continue trying to push our preimage to the server.
-	trackChan, trackErrChan, err := s.lnd.Router.TrackPayment(
-		ctx, s.hash,
+	var (
+		trackChan    <-chan lndclient.PaymentStatus
+		trackErrChan <-chan error
 	)
-	if err != nil {
-		return nil, fmt.Errorf("track payment: %v", err)
+	if !s.ExternalPayments {
+		var err error
+		trackChan, trackErrChan, err = s.lnd.Router.TrackPayment(
+			ctx, s.hash,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("track payment: %v", err)
+		}
 	}
 
 	var (
@@ -1620,6 +1652,9 @@ func (m *resumeManager) handleUnfinishedLoopOut(ctx context.Context,
 	if err != nil {
 		return err
 	}
+	if swap.Contract.ExternalPayments {
+		return nil
+	}
 
 	typ := swap.State().State.Type()
 	// Check the state of the swap and take appropriate action.
@@ -1668,6 +1703,9 @@ trackChanLoop:
 // specified swap.
 func (m *resumeManager) resumeLoopOutPayment(ctx context.Context,
 	swap *loopdb.LoopOut) error {
+	if swap.Contract.ExternalPayments {
+		return nil
+	}
 
 	swapRes, err := m.swapClient.NewLoopOutSwap(
 		ctx, &swapserverrpc.ServerLoopOutRequest{

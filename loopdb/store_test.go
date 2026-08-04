@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package loopdb
 
 import (
@@ -13,42 +15,10 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightninglabs/loop/test"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/bbolt"
 	bbolterrors "go.etcd.io/bbolt/errors"
-)
-
-var (
-	senderKey = [33]byte{
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
-	}
-
-	receiverKey = [33]byte{
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3,
-	}
-
-	senderInternalKey = [33]byte{
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4,
-	}
-
-	receiverInternalKey = [33]byte{
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5,
-	}
-
-	testPreimage = lntypes.Preimage([32]byte{
-		1, 1, 1, 1, 2, 2, 2, 2,
-		3, 3, 3, 3, 4, 4, 4, 4,
-		1, 1, 1, 1, 2, 2, 2, 2,
-		3, 3, 3, 3, 4, 4, 4, 4,
-	})
-
-	testTime = time.Date(2018, time.January, 9, 14, 00, 00, 0, time.UTC)
 )
 
 // TestNewBoltSwapStoreTimeout ensures a wrapped bbolt timeout is detected
@@ -136,6 +106,26 @@ func TestLoopOutStore(t *testing.T) {
 	labelledSwap.Label = testLabel
 	t.Run("labelled swap", func(t *testing.T) {
 		testLoopOutStore(t, &labelledSwap)
+	})
+
+	externalPaymentSwap := unrestrictedSwap
+	externalPaymentSwap.ExternalPayments = true
+	t.Run("external payments", func(t *testing.T) {
+		testLoopOutStore(t, &externalPaymentSwap)
+	})
+
+	t.Run("legacy contract defaults to internal payments", func(t *testing.T) {
+		encoded, err := serializeLoopOutContract(&unrestrictedSwap)
+		require.NoError(t, err)
+
+		// ExternalPayments is the final byte in the current encoding.
+		// Removing it recreates a contract written by an older client.
+		legacyEncoded := encoded[:len(encoded)-1]
+		decoded, err := deserializeLoopOutContract(
+			legacyEncoded, &chaincfg.MainNetParams,
+		)
+		require.NoError(t, err)
+		require.False(t, decoded.ExternalPayments)
 	})
 }
 

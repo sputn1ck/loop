@@ -154,8 +154,10 @@ type grpcSwapServerClient struct {
 // stop sends the signal for the server's goroutines to shutdown and waits for
 // them to complete.
 func (s *grpcSwapServerClient) stop() {
-	if err := s.conn.Close(); err != nil {
-		log.Warnf("could not close connection: %v", err)
+	if s.conn != nil {
+		if err := s.conn.Close(); err != nil {
+			log.Warnf("could not close connection: %v", err)
+		}
 	}
 
 	s.wg.Wait()
@@ -165,6 +167,11 @@ var _ swapServerClient = (*grpcSwapServerClient)(nil)
 
 func newSwapServerClient(cfg *ClientConfig, l402Store l402.Store) (
 	*grpcSwapServerClient, error) {
+	if cfg.SwapServerClient != nil {
+		return &grpcSwapServerClient{
+			server: cfg.SwapServerClient,
+		}, nil
+	}
 
 	// Create the server connection with the interceptor that will handle
 	// the L402 protocol for us.

@@ -93,7 +93,8 @@
           "reservation_ids": [],
           "payment_timeout": 30,
           "asset_info": null,
-          "asset_rfq_info": null
+          "asset_rfq_info": null,
+          "external_payments": false
         }
       }
     },

@@ -4,27 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	postgres_migrate "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lightninglabs/loop/loopdb/sqlc"
-	"github.com/stretchr/testify/require"
 )
 
 const (
 	dsnTemplate = "postgres://%v:%v@%v:%d/%v?sslmode=%v"
-)
-
-var (
-	// DefaultPostgresFixtureLifetime is the default maximum time a Postgres
-	// test fixture is being kept alive. After that time the docker
-	// container will be terminated forcefully, even if the tests aren't
-	// fully executed yet. So this time needs to be chosen correctly to be
-	// longer than the longest expected individual test run time.
-	DefaultPostgresFixtureLifetime = 10 * time.Minute
 )
 
 // PostgresConfig holds the postgres database configuration.
@@ -141,24 +130,4 @@ func NewPostgresStore(cfg *PostgresConfig,
 		cfg:    cfg,
 		BaseDB: baseDB,
 	}, nil
-}
-
-// NewTestPostgresDB is a helper function that creates a Postgres database for
-// testing.
-func NewTestPostgresDB(t *testing.T) *PostgresStore {
-	t.Helper()
-
-	t.Logf("Creating new Postgres DB for testing")
-
-	sqlFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
-	store, err := NewPostgresStore(
-		sqlFixture.GetConfig(), &chaincfg.MainNetParams,
-	)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sqlFixture.TearDown(t)
-	})
-
-	return store
 }

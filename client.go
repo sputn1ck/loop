@@ -18,6 +18,7 @@ import (
 	"github.com/lightninglabs/loop/assets"
 	"github.com/lightninglabs/loop/loopdb"
 	"github.com/lightninglabs/loop/swap"
+	"github.com/lightninglabs/loop/swapserverrpc"
 	"github.com/lightninglabs/loop/sweep"
 	"github.com/lightninglabs/loop/sweepbatcher"
 	"github.com/lightninglabs/loop/utils"
@@ -129,6 +130,17 @@ type ClientConfig struct {
 	// connect to the server.
 	TLSPathServer string
 
+	// SwapServerClient optionally supplies the generated client used to
+	// communicate with the Loop server. When set, Loop does not create or
+	// own a native gRPC connection. This allows alternate transports to
+	// implement the generated client interface.
+	SwapServerClient swapserverrpc.SwapServerClient
+
+	// L402Store optionally supplies token persistence. Browser runtimes use
+	// this to keep authorization state in the same recoverable database as
+	// the embedded wallet instead of relying on a process-local filesystem.
+	L402Store l402.Store
+
 	// Lnd is an instance of the lnd proxy.
 	Lnd *lndclient.LndServices
 
@@ -182,9 +194,13 @@ func NewClient(dbDir string, loopDB loopdb.SwapStore,
 	sweeperDb sweepbatcher.BatcherStore, cfg *ClientConfig) (
 	*Client, func(), error) {
 
-	l402Store, err := l402.NewFileStore(dbDir)
-	if err != nil {
-		return nil, nil, err
+	l402Store := cfg.L402Store
+	if l402Store == nil {
+		var err error
+		l402Store, err = l402.NewFileStore(dbDir)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	swapServerClient, err := newSwapServerClient(cfg, l402Store)
@@ -344,11 +360,14 @@ func (s *Client) FetchSwaps(ctx context.Context) ([]*SwapInfo, error) {
 
 	for _, swp := range loopOutSwaps {
 		swapInfo := &SwapInfo{
-			SwapType:      swap.TypeOut,
-			SwapContract:  swp.Contract.SwapContract,
-			SwapStateData: swp.State(),
-			SwapHash:      swp.Hash,
-			LastUpdate:    swp.LastUpdateTime(),
+			SwapType:         swap.TypeOut,
+			SwapContract:     swp.Contract.SwapContract,
+			SwapStateData:    swp.State(),
+			SwapHash:         swp.Hash,
+			LastUpdate:       swp.LastUpdateTime(),
+			SwapInvoice:      swp.Contract.SwapInvoice,
+			PrepayInvoice:    swp.Contract.PrepayInvoice,
+			ExternalPayments: swp.Contract.ExternalPayments,
 		}
 
 		htlc, err := utils.GetHtlc(
@@ -535,6 +554,10 @@ func (s *Client) resumeSwaps(ctx context.Context,
 // The return value is a hash that uniquely identifies the new swap.
 func (s *Client) LoopOut(globalCtx context.Context,
 	request *OutRequest) (*LoopOutSwapInfo, error) {
+	if request.ExternalPayments && request.AssetId != nil {
+		return nil, errors.New("external payments are not supported " +
+			"for asset loop outs")
+	}
 
 	if request.AssetId != nil {
 		if request.AssetPrepayRfqId == nil ||
@@ -599,9 +622,12 @@ func (s *Client) LoopOut(globalCtx context.Context,
 	// Return hash so that the caller can identify this swap in the updates
 	// stream.
 	return &LoopOutSwapInfo{
-		SwapHash:      swap.hash,
-		HtlcAddress:   swap.htlc.Address,
-		ServerMessage: initResult.serverMessage,
+		SwapHash:         swap.hash,
+		HtlcAddress:      swap.htlc.Address,
+		ServerMessage:    initResult.serverMessage,
+		SwapInvoice:      swap.SwapInvoice,
+		PrepayInvoice:    swap.PrepayInvoice,
+		ExternalPayments: swap.ExternalPayments,
 	}, nil
 }
 
@@ -747,6 +773,13 @@ func (s *Client) waitForInitialized(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// WaitForInitialized waits until the chain tip is known and persisted swaps
+// have been handed back to the executor. Embedded runtimes use this before
+// exposing quote calls so they never calculate an expiry from height zero.
+func (s *Client) WaitForInitialized(ctx context.Context) error {
+	return s.waitForInitialized(ctx)
 }
 
 // LoopIn initiates a loop in swap.

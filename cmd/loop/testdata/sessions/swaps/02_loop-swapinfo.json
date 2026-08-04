@@ -67,6 +67,7 @@
           "    \"cost_offchain\": \"0\",\n",
           "    \"cost_onchain\": \"0\",\n",
           "    \"cost_server\": \"0\",\n",
+          "    \"external_payments\": false,\n",
           "    \"failure_reason\": \"FAILURE_REASON_NONE\",\n",
           "    \"htlc_address\": \"bcrt1pj90ffd4j9hc2a58xpl3q77c6pf8ckhqhv9w9m2529kqsk77f6lksrca9pv\",\n",
           "    \"htlc_address_p2tr\": \"bcrt1pj90ffd4j9hc2a58xpl3q77c6pf8ckhqhv9w9m2529kqsk77f6lksrca9pv\",\n",
@@ -78,7 +79,9 @@
           "    \"last_hop\": \"\",\n",
           "    \"last_update_time\": \"1770081011767003660\",\n",
           "    \"outgoing_chan_set\": [],\n",
+          "    \"prepay_invoice\": \"\",\n",
           "    \"state\": \"INITIATED\",\n",
+          "    \"swap_invoice\": \"\",\n",
           "    \"type\": \"LOOP_OUT\"\n",
           "}\n"
         ]

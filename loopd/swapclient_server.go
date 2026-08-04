@@ -157,6 +157,10 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 			"allowed timeout of %v", paymentTimeout,
 			s.config.TotalPaymentTimeout)
 	}
+	if in.ExternalPayments && in.AssetInfo != nil {
+		return nil, errors.New("external payments are not supported " +
+			"for asset loop outs")
+	}
 
 	var sweepAddr btcutil.Address
 	var isExternalAddr bool
@@ -242,6 +246,7 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		Label:                   in.Label,
 		Initiator:               in.Initiator,
 		PaymentTimeout:          paymentTimeout,
+		ExternalPayments:        in.ExternalPayments,
 	}
 
 	// If the asset id is set, we need to set the asset amount and asset id
@@ -295,12 +300,20 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		return nil, err
 	}
 
+	return marshallLoopOutResponse(info), nil
+}
+
+// marshallLoopOutResponse maps the core Loop Out response to its RPC form.
+func marshallLoopOutResponse(info *loop.LoopOutSwapInfo) *looprpc.SwapResponse {
 	htlcAddress := info.HtlcAddress.String()
 	resp := &looprpc.SwapResponse{
-		Id:            info.SwapHash.String(),
-		IdBytes:       info.SwapHash[:],
-		HtlcAddress:   htlcAddress, //nolint:staticcheck
-		ServerMessage: info.ServerMessage,
+		Id:               info.SwapHash.String(),
+		IdBytes:          info.SwapHash[:],
+		HtlcAddress:      htlcAddress, //nolint:staticcheck
+		ServerMessage:    info.ServerMessage,
+		SwapInvoice:      info.SwapInvoice,
+		PrepayInvoice:    info.PrepayInvoice,
+		ExternalPayments: info.ExternalPayments,
 	}
 
 	if loopdb.CurrentProtocolVersion() < loopdb.ProtocolVersionHtlcV3 {
@@ -309,7 +322,7 @@ func (s *swapClientServer) LoopOut(ctx context.Context,
 		resp.HtlcAddressP2Tr = htlcAddress
 	}
 
-	return resp, nil
+	return resp
 }
 
 // accountExists returns true if account under the address type exists in the
@@ -520,6 +533,9 @@ func (s *swapClientServer) marshallSwap(ctx context.Context,
 		LastHop:          lastHop,
 		OutgoingChanSet:  outGoingChanSet,
 		AssetInfo:        assetInfo,
+		SwapInvoice:      loopSwap.SwapInvoice,
+		PrepayInvoice:    loopSwap.PrepayInvoice,
+		ExternalPayments: loopSwap.ExternalPayments,
 	}
 	if swapType == looprpc.SwapType_STATIC_LOOP_IN {
 		rpcSwap.StaticLoopInStateOptional =
@@ -2981,6 +2997,15 @@ func validateLoopOutRequest(ctx context.Context, lnd lndclient.LightningClient,
 	// Check that the label is valid.
 	if err := labels.Validate(req.Label); err != nil {
 		return 0, err
+	}
+
+	// An external payer supplies its own Lightning liquidity, so the local
+	// node's channel balance and outgoing channel set do not constrain the
+	// swap.
+	if req.ExternalPayments {
+		return validateConfTarget(
+			req.SweepConfTarget, loop.DefaultSweepConfTarget,
+		)
 	}
 
 	channels, err := lnd.ListChannels(ctx, false, false)

@@ -41,6 +41,100 @@ func TestLoopOutPaymentParameters(t *testing.T) {
 	})
 }
 
+// TestExternalLoopOutDoesNotTrackPayment asserts that the on-chain sweep path
+// avoids lnd's router when the invoices are paid by an external wallet.
+func TestExternalLoopOutDoesNotTrackPayment(t *testing.T) {
+	defer test.Guard(t)()
+
+	lnd := test.NewMockLnd()
+	timerCreated := make(chan struct{})
+	never := make(chan time.Time)
+
+	swap := &loopOutSwap{
+		LoopOutContract: loopdb.LoopOutContract{
+			ExternalPayments: true,
+		},
+		swapKit: swapKit{
+			swapConfig: swapConfig{
+				lnd: &lnd.LndServices,
+			},
+		},
+		executeConfig: executeConfig{
+			timerFactory: func(time.Duration) <-chan time.Time {
+				close(timerCreated)
+
+				return never
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errChan := make(chan error, 1)
+	go func() {
+		_, err := swap.waitForHtlcSpendConfirmedV2(
+			ctx, wire.OutPoint{}, 1,
+		)
+		errChan <- err
+	}()
+
+	select {
+	case <-timerCreated:
+
+	case payment := <-lnd.TrackPaymentChannel:
+		t.Fatalf("unexpected external payment tracking: %v", payment)
+
+	case <-time.After(test.Timeout):
+		cancel()
+		t.Fatal("external payment sweep did not start")
+	}
+
+	cancel()
+	require.ErrorIs(t, <-errChan, context.Canceled)
+}
+
+// TestExternalLoopOutRecoveryDoesNotRoutePayment asserts that server recovery
+// notifications cannot make a completed external-payment swap use lnd.
+func TestExternalLoopOutRecoveryDoesNotRoutePayment(t *testing.T) {
+	defer test.Guard(t)()
+
+	lnd := test.NewMockLnd()
+	store := loopdb.NewStoreMock(t)
+	hash := lntypes.Hash{1}
+	store.LoopOutSwaps[hash] = &loopdb.LoopOutContract{
+		ExternalPayments: true,
+	}
+	store.LoopOutUpdates[hash] = []loopdb.SwapStateData{
+		{
+			State: loopdb.StateSuccess,
+		},
+	}
+
+	manager := &resumeManager{
+		swapStore: store,
+		lnd: &lndclient.GrpcLndServices{
+			LndServices: lnd.LndServices,
+		},
+	}
+
+	err := manager.handleUnfinishedLoopOut(t.Context(), hash)
+	require.NoError(t, err)
+
+	select {
+	case payment := <-lnd.TrackPaymentChannel:
+		t.Fatalf("recovery tracked external payment through lnd: %v",
+			payment)
+
+	default:
+	}
+
+	err = manager.resumeLoopOutPayment(t.Context(), &loopdb.LoopOut{
+		Contract: &loopdb.LoopOutContract{
+			ExternalPayments: true,
+		},
+	})
+	require.NoError(t, err)
+}
+
 // testLoopOutPaymentParameters tests the first part of the loop out process up
 // to the point where the off-chain payments are made.
 func testLoopOutPaymentParameters(t *testing.T) {

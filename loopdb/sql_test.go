@@ -90,6 +90,12 @@ func TestSqliteLoopOutStore(t *testing.T) {
 		testSqliteLoopOutStore(t, &labelledSwap)
 	})
 
+	externalPaymentSwap := unrestrictedSwap
+	externalPaymentSwap.ExternalPayments = true
+	t.Run("external payments", func(t *testing.T) {
+		testSqliteLoopOutStore(t, &externalPaymentSwap)
+	})
+
 	assetSwap := unrestrictedSwap
 	assetSwap.AssetSwapInfo = &LoopOutAssetSwap{
 		AssetId:     testAssetId,

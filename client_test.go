@@ -92,6 +92,83 @@ func TestLoopOutSuccess(t *testing.T) {
 	)
 }
 
+// TestLoopOutExternalPayments asserts that external payment mode, invoices and
+// persistence survive a client restart without dispatching through lnd.
+func TestLoopOutExternalPayments(t *testing.T) {
+	defer test.Guard(t)()
+
+	request := *testRequest
+	request.ExternalPayments = true
+
+	clientCtx := createClientTestContext(t, nil)
+	info, err := clientCtx.swapClient.LoopOut(t.Context(), &request)
+	require.NoError(t, err)
+	require.True(t, info.ExternalPayments)
+	require.NotEmpty(t, info.SwapInvoice)
+	require.NotEmpty(t, info.PrepayInvoice)
+
+	clientCtx.assertStored()
+	storedContract := clientCtx.store.LoopOutSwaps[info.SwapHash]
+	require.True(t, storedContract.ExternalPayments)
+
+	fetchedSwaps, err := clientCtx.swapClient.FetchSwaps(t.Context())
+	require.NoError(t, err)
+	require.Len(t, fetchedSwaps, 1)
+	require.Equal(t, info.SwapInvoice, fetchedSwaps[0].SwapInvoice)
+	require.Equal(t, info.PrepayInvoice, fetchedSwaps[0].PrepayInvoice)
+	require.True(t, fetchedSwaps[0].ExternalPayments)
+
+	clientCtx.assertStatus(loopdb.StateInitiated)
+	clientCtx.Context.AssertRegisterConf(false, defaultConfirmations)
+	assertNoLoopOutPayment(t, clientCtx.Lnd.RouterSendPaymentChannel)
+
+	contractCopy := *storedContract
+	clientCtx.finish()
+
+	// Recreate the client around the stored contract to exercise the actual
+	// resume path rather than only inspecting the serialized field.
+	resumedCtx := createClientTestContext(t, []*loopdb.LoopOut{
+		{
+			Loop: loopdb.Loop{
+				Hash: info.SwapHash,
+			},
+			Contract: &contractCopy,
+		},
+	})
+	resumedCtx.assertStatus(loopdb.StateInitiated)
+	resumedCtx.Context.AssertRegisterConf(false, defaultConfirmations)
+	assertNoLoopOutPayment(t, resumedCtx.Lnd.RouterSendPaymentChannel)
+
+	resumedCtx.finish()
+}
+
+// assertNoLoopOutPayment fails if Loop dispatched an invoice through lnd.
+func assertNoLoopOutPayment(t *testing.T,
+	payments <-chan test.RouterPaymentChannelMessage) {
+
+	t.Helper()
+
+	select {
+	case payment := <-payments:
+		t.Fatalf("unexpected external invoice payment: %v", payment.Invoice)
+
+	default:
+	}
+}
+
+// TestLoopOutExternalPaymentsRejectAssets asserts that an asset swap cannot be
+// put into a mode that leaves Lightning payment to an external wallet.
+func TestLoopOutExternalPaymentsRejectAssets(t *testing.T) {
+	client := &Client{}
+	request := &OutRequest{
+		ExternalPayments: true,
+		AssetId:          []byte{1},
+	}
+
+	_, err := client.LoopOut(t.Context(), request)
+	require.ErrorContains(t, err, "external payments are not supported")
+}
+
 // TestLoopOutFailOffchain tests the handling of swap for which the server
 // failed the payments.
 func TestLoopOutFailOffchain(t *testing.T) {

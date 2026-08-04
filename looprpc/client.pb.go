@@ -993,9 +993,12 @@ type LoopOutRequest struct {
 	AssetInfo *AssetLoopOutRequest `protobuf:"bytes,20,opt,name=asset_info,json=assetInfo,proto3" json:"asset_info,omitempty"`
 	// The optional RFQ information to use for the swap. If set, the swap will
 	// use the provided RFQs to pay for the swap invoice.
-	AssetRfqInfo  *AssetRfqInfo `protobuf:"bytes,21,opt,name=asset_rfq_info,json=assetRfqInfo,proto3" json:"asset_rfq_info,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AssetRfqInfo *AssetRfqInfo `protobuf:"bytes,21,opt,name=asset_rfq_info,json=assetRfqInfo,proto3" json:"asset_rfq_info,omitempty"`
+	// A flag indicating that the caller will pay the swap and prepay invoices
+	// externally. Loop will not dispatch or track these payments through lnd.
+	ExternalPayments bool `protobuf:"varint,22,opt,name=external_payments,json=externalPayments,proto3" json:"external_payments,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *LoopOutRequest) Reset() {
@@ -1176,6 +1179,13 @@ func (x *LoopOutRequest) GetAssetRfqInfo() *AssetRfqInfo {
 	return nil
 }
 
+func (x *LoopOutRequest) GetExternalPayments() bool {
+	if x != nil {
+		return x.ExternalPayments
+	}
+	return false
+}
+
 type LoopInRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Requested swap amount in sat. This does not include the swap and miner
@@ -1347,8 +1357,14 @@ type SwapResponse struct {
 	HtlcAddressP2Tr string `protobuf:"bytes,7,opt,name=htlc_address_p2tr,json=htlcAddressP2tr,proto3" json:"htlc_address_p2tr,omitempty"`
 	// A human-readable message received from the loop server.
 	ServerMessage string `protobuf:"bytes,6,opt,name=server_message,json=serverMessage,proto3" json:"server_message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The main Lightning invoice for a loop out.
+	SwapInvoice string `protobuf:"bytes,8,opt,name=swap_invoice,json=swapInvoice,proto3" json:"swap_invoice,omitempty"`
+	// The prepayment Lightning invoice for a loop out.
+	PrepayInvoice string `protobuf:"bytes,9,opt,name=prepay_invoice,json=prepayInvoice,proto3" json:"prepay_invoice,omitempty"`
+	// Whether the loop out invoices must be paid and tracked externally.
+	ExternalPayments bool `protobuf:"varint,10,opt,name=external_payments,json=externalPayments,proto3" json:"external_payments,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SwapResponse) Reset() {
@@ -1423,6 +1439,27 @@ func (x *SwapResponse) GetServerMessage() string {
 		return x.ServerMessage
 	}
 	return ""
+}
+
+func (x *SwapResponse) GetSwapInvoice() string {
+	if x != nil {
+		return x.SwapInvoice
+	}
+	return ""
+}
+
+func (x *SwapResponse) GetPrepayInvoice() string {
+	if x != nil {
+		return x.PrepayInvoice
+	}
+	return ""
+}
+
+func (x *SwapResponse) GetExternalPayments() bool {
+	if x != nil {
+		return x.ExternalPayments
+	}
+	return false
 }
 
 type MonitorRequest struct {
@@ -1515,9 +1552,15 @@ type SwapStatus struct {
 	// An optional label given to the swap on creation.
 	Label string `protobuf:"bytes,15,opt,name=label,proto3" json:"label,omitempty"`
 	// If the swap was an asset swap, the asset information will be returned.
-	AssetInfo     *AssetLoopOutInfo `protobuf:"bytes,19,opt,name=asset_info,json=assetInfo,proto3" json:"asset_info,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AssetInfo *AssetLoopOutInfo `protobuf:"bytes,19,opt,name=asset_info,json=assetInfo,proto3" json:"asset_info,omitempty"`
+	// The main Lightning invoice for an externally paid loop out.
+	SwapInvoice string `protobuf:"bytes,21,opt,name=swap_invoice,json=swapInvoice,proto3" json:"swap_invoice,omitempty"`
+	// The prepayment Lightning invoice for an externally paid loop out.
+	PrepayInvoice string `protobuf:"bytes,22,opt,name=prepay_invoice,json=prepayInvoice,proto3" json:"prepay_invoice,omitempty"`
+	// Whether the loop out invoices are paid and tracked externally.
+	ExternalPayments bool `protobuf:"varint,23,opt,name=external_payments,json=externalPayments,proto3" json:"external_payments,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SwapStatus) Reset() {
@@ -1692,6 +1735,27 @@ func (x *SwapStatus) GetAssetInfo() *AssetLoopOutInfo {
 		return x.AssetInfo
 	}
 	return nil
+}
+
+func (x *SwapStatus) GetSwapInvoice() string {
+	if x != nil {
+		return x.SwapInvoice
+	}
+	return ""
+}
+
+func (x *SwapStatus) GetPrepayInvoice() string {
+	if x != nil {
+		return x.PrepayInvoice
+	}
+	return ""
+}
+
+func (x *SwapStatus) GetExternalPayments() bool {
+	if x != nil {
+		return x.ExternalPayments
+	}
+	return false
 }
 
 type isSwapStatus_StaticLoopInStateOptional interface {
@@ -6692,7 +6756,7 @@ const file_client_proto_rawDesc = "" +
 	"\x19StaticOpenChannelResponse\x122\n" +
 	"\x15channel_open_outpoint\x18\x01 \x01(\tR\x13channelOpenOutpoint\"\x13\n" +
 	"\x11StopDaemonRequest\"\x14\n" +
-	"\x12StopDaemonResponse\"\xff\x06\n" +
+	"\x12StopDaemonResponse\"\xac\a\n" +
 	"\x0eLoopOutRequest\x12\x10\n" +
 	"\x03amt\x18\x01 \x01(\x03R\x03amt\x12\x12\n" +
 	"\x04dest\x18\x02 \x01(\tR\x04dest\x12/\n" +
@@ -6717,7 +6781,8 @@ const file_client_proto_rawDesc = "" +
 	"\x0fpayment_timeout\x18\x13 \x01(\rR\x0epaymentTimeout\x12;\n" +
 	"\n" +
 	"asset_info\x18\x14 \x01(\v2\x1c.looprpc.AssetLoopOutRequestR\tassetInfo\x12;\n" +
-	"\x0easset_rfq_info\x18\x15 \x01(\v2\x15.looprpc.AssetRfqInfoR\fassetRfqInfo\"\xd4\x02\n" +
+	"\x0easset_rfq_info\x18\x15 \x01(\v2\x15.looprpc.AssetRfqInfoR\fassetRfqInfo\x12+\n" +
+	"\x11external_payments\x18\x16 \x01(\bR\x10externalPayments\"\xd4\x02\n" +
 	"\rLoopInRequest\x12\x10\n" +
 	"\x03amt\x18\x01 \x01(\x03R\x03amt\x12 \n" +
 	"\fmax_swap_fee\x18\x02 \x01(\x03R\n" +
@@ -6731,15 +6796,19 @@ const file_client_proto_rawDesc = "" +
 	"\vroute_hints\x18\t \x03(\v2\x12.looprpc.RouteHintR\n" +
 	"routeHints\x12\x18\n" +
 	"\aprivate\x18\n" +
-	" \x01(\bR\aprivate\"\xeb\x01\n" +
+	" \x01(\bR\aprivate\"\xe2\x02\n" +
 	"\fSwapResponse\x12\x12\n" +
 	"\x02id\x18\x01 \x01(\tB\x02\x18\x01R\x02id\x12\x19\n" +
 	"\bid_bytes\x18\x03 \x01(\fR\aidBytes\x12%\n" +
 	"\fhtlc_address\x18\x02 \x01(\tB\x02\x18\x01R\vhtlcAddress\x12,\n" +
 	"\x12htlc_address_p2wsh\x18\x05 \x01(\tR\x10htlcAddressP2wsh\x12*\n" +
 	"\x11htlc_address_p2tr\x18\a \x01(\tR\x0fhtlcAddressP2tr\x12%\n" +
-	"\x0eserver_message\x18\x06 \x01(\tR\rserverMessageJ\x04\b\x04\x10\x05\"\x10\n" +
-	"\x0eMonitorRequest\"\xac\x06\n" +
+	"\x0eserver_message\x18\x06 \x01(\tR\rserverMessage\x12!\n" +
+	"\fswap_invoice\x18\b \x01(\tR\vswapInvoice\x12%\n" +
+	"\x0eprepay_invoice\x18\t \x01(\tR\rprepayInvoice\x12+\n" +
+	"\x11external_payments\x18\n" +
+	" \x01(\bR\x10externalPaymentsJ\x04\b\x04\x10\x05\"\x10\n" +
+	"\x0eMonitorRequest\"\xa3\a\n" +
 	"\n" +
 	"SwapStatus\x12\x10\n" +
 	"\x03amt\x18\x01 \x01(\x03R\x03amt\x12\x12\n" +
@@ -6763,7 +6832,10 @@ const file_client_proto_rawDesc = "" +
 	"\x11outgoing_chan_set\x18\x11 \x03(\x04R\x0foutgoingChanSet\x12\x14\n" +
 	"\x05label\x18\x0f \x01(\tR\x05label\x128\n" +
 	"\n" +
-	"asset_info\x18\x13 \x01(\v2\x19.looprpc.AssetLoopOutInfoR\tassetInfoB\x1f\n" +
+	"asset_info\x18\x13 \x01(\v2\x19.looprpc.AssetLoopOutInfoR\tassetInfo\x12!\n" +
+	"\fswap_invoice\x18\x15 \x01(\tR\vswapInvoice\x12%\n" +
+	"\x0eprepay_invoice\x18\x16 \x01(\tR\rprepayInvoice\x12+\n" +
+	"\x11external_payments\x18\x17 \x01(\bR\x10externalPaymentsB\x1f\n" +
 	"\x1dstatic_loop_in_state_optional\"s\n" +
 	"\x10ListSwapsRequest\x12B\n" +
 	"\x10list_swap_filter\x18\x01 \x01(\v2\x18.looprpc.ListSwapsFilterR\x0elistSwapFilter\x12\x1b\n" +

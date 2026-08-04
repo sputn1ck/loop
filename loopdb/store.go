@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package loopdb
 
 import (
@@ -133,30 +135,12 @@ var (
 	// value: serialized public key.
 	receiverInternalPubKeyKey = []byte("receiver-internal-pubkey")
 
-	byteOrder = binary.BigEndian
-
-	// keyLength is the length of a serialized public key.
-	keyLength = 33
-
 	// errInvalidKey is returned when a serialized key is not the expected
 	// length.
 	errInvalidKey = fmt.Errorf("invalid serialized key")
 
 	// errUnimplemented is returned when a method is not implemented.
 	errUnimplemented = fmt.Errorf("unimplemented method")
-)
-
-const (
-	// DefaultLoopOutHtlcConfirmations is the default number of
-	// confirmations we set for a loop out htlc.
-	DefaultLoopOutHtlcConfirmations uint32 = 1
-
-	// DefaultLoopDBTimeout is the default maximum time we wait for the
-	// Loop bbolt database to be opened. If the database is already opened
-	// by another process, the unique lock cannot be obtained. With the
-	// timeout we error out after the given time instead of just blocking
-	// for forever.
-	DefaultLoopDBTimeout = 5 * time.Second
 )
 
 // fileExists returns true if the file exists, and false otherwise.

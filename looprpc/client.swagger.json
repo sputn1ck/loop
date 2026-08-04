@@ -2475,6 +2475,10 @@
         "asset_rfq_info": {
           "$ref": "#/definitions/looprpcAssetRfqInfo",
           "description": "The optional RFQ information to use for the swap. If set, the swap will\nuse the provided RFQs to pay for the swap invoice."
+        },
+        "external_payments": {
+          "type": "boolean",
+          "description": "A flag indicating that the caller will pay the swap and prepay invoices\nexternally. Loop will not dispatch or track these payments through lnd."
         }
       }
     },
@@ -3022,6 +3026,18 @@
         "server_message": {
           "type": "string",
           "description": "A human-readable message received from the loop server."
+        },
+        "swap_invoice": {
+          "type": "string",
+          "description": "The main Lightning invoice for a loop out."
+        },
+        "prepay_invoice": {
+          "type": "string",
+          "description": "The prepayment Lightning invoice for a loop out."
+        },
+        "external_payments": {
+          "type": "boolean",
+          "description": "Whether the loop out invoices must be paid and tracked externally."
         }
       }
     },
@@ -3128,6 +3144,18 @@
         "asset_info": {
           "$ref": "#/definitions/looprpcAssetLoopOutInfo",
           "description": "If the swap was an asset swap, the asset information will be returned."
+        },
+        "swap_invoice": {
+          "type": "string",
+          "description": "The main Lightning invoice for an externally paid loop out."
+        },
+        "prepay_invoice": {
+          "type": "string",
+          "description": "The prepayment Lightning invoice for an externally paid loop out."
+        },
+        "external_payments": {
+          "type": "boolean",
+          "description": "Whether the loop out invoices are paid and tracked externally."
         }
       }
     },

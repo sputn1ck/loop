@@ -101,6 +101,10 @@ type OutRequest struct {
 	// a multiple of this value.
 	PaymentTimeout time.Duration
 
+	// ExternalPayments leaves the swap and prepay invoices for the caller to
+	// pay instead of dispatching them through lnd's router.
+	ExternalPayments bool
+
 	// AssetId is an optional asset id that can be used to specify the asset
 	// that will be used to pay for the swap. If this is set, a connection
 	// to a tapd server is required to pay for the asset.
@@ -465,6 +469,17 @@ type LoopOutSwapInfo struct { // nolint:revive
 	// ServerMessage is the human-readable message received from the loop
 	// server.
 	ServerMessage string
+
+	// SwapInvoice is the main Lightning payment request. It is populated so
+	// external-payment clients can hand it to another Lightning wallet.
+	SwapInvoice string
+
+	// PrepayInvoice is the small prepayment request returned by the server.
+	PrepayInvoice string
+
+	// ExternalPayments reports that Loop will not dispatch or track these
+	// invoices through lnd's router.
+	ExternalPayments bool
 }
 
 // SwapInfoKit contains common swap info fields.
@@ -511,6 +526,18 @@ type SwapInfo struct {
 
 	// ExternalHtlc is set to true for external loop-in swaps.
 	ExternalHtlc bool
+
+	// SwapInvoice is the main Lightning payment request for a loop-out. It is
+	// retained so an external-payment client can redisplay it after restart.
+	SwapInvoice string
+
+	// PrepayInvoice is the prepayment request for a loop-out. It is retained
+	// so an external-payment client can redisplay it after restart.
+	PrepayInvoice string
+
+	// ExternalPayments is set for loop-outs whose invoices are paid and
+	// tracked outside of Loop.
+	ExternalPayments bool
 
 	// LastHop optionally specifies the last hop to use for the loop in
 	// payment. On a loop out this field is nil.

@@ -535,6 +535,53 @@ func TestStaticAddressLoopInMarshallUsesStaticTypeAndP2WSH(t *testing.T) {
 	require.Empty(t, rpcSwap.HtlcAddressP2Tr)
 }
 
+// TestLoopOutMarshallExternalPayments asserts that monitor and list responses
+// retain the invoices needed to resume an externally paid loop out.
+func TestLoopOutMarshallExternalPayments(t *testing.T) {
+	server := &swapClientServer{}
+	loopSwap := &loop.SwapInfo{
+		SwapStateData: loopdb.SwapStateData{
+			State: loopdb.StateInitiated,
+		},
+		SwapContract: loopdb.SwapContract{
+			InitiationTime: time.Now(),
+		},
+		LastUpdate:       time.Now(),
+		SwapHash:         lntypes.Hash{1},
+		SwapType:         swap.TypeOut,
+		HtlcAddressP2WSH: testnetAddr,
+		SwapInvoice:      "swap-invoice",
+		PrepayInvoice:    "prepay-invoice",
+		ExternalPayments: true,
+	}
+
+	rpcSwap, err := server.marshallSwap(t.Context(), loopSwap)
+	require.NoError(t, err)
+	require.Equal(t, "swap-invoice", rpcSwap.SwapInvoice)
+	require.Equal(t, "prepay-invoice", rpcSwap.PrepayInvoice)
+	require.True(t, rpcSwap.ExternalPayments)
+}
+
+// TestMarshallLoopOutResponseExternalPayments asserts that initiation
+// responses expose both externally payable invoices.
+func TestMarshallLoopOutResponseExternalPayments(t *testing.T) {
+	info := &loop.LoopOutSwapInfo{
+		SwapHash:         lntypes.Hash{1},
+		HtlcAddress:      testnetAddr,
+		ServerMessage:    "server-message",
+		SwapInvoice:      "swap-invoice",
+		PrepayInvoice:    "prepay-invoice",
+		ExternalPayments: true,
+	}
+
+	response := marshallLoopOutResponse(info)
+	require.Equal(t, info.SwapHash[:], response.IdBytes)
+	require.Equal(t, "server-message", response.ServerMessage)
+	require.Equal(t, "swap-invoice", response.SwapInvoice)
+	require.Equal(t, "prepay-invoice", response.PrepayInvoice)
+	require.True(t, response.ExternalPayments)
+}
+
 // TestStaticAddressLoopInMarshallFailuresLeaveLegacyFieldsDefault asserts that
 // static loop-in failures keep default legacy fields while preserving the
 // precise static state.
@@ -1173,19 +1220,33 @@ func TestSwapClientServerStopDaemon(t *testing.T) {
 // TestValidateLoopOutRequest tests validation of loop out requests.
 func TestValidateLoopOutRequest(t *testing.T) {
 	tests := []struct {
-		name            string
-		chain           chaincfg.Params
-		confTarget      int32
-		destAddr        btcutil.Address
-		label           string
-		channels        []lndclient.ChannelInfo
-		outgoingChanSet []uint64
-		amount          int64
-		maxRoutingFee   int64
-		maxParts        uint32
-		err             error
-		expectedTarget  int32
+		name             string
+		chain            chaincfg.Params
+		confTarget       int32
+		destAddr         btcutil.Address
+		label            string
+		channels         []lndclient.ChannelInfo
+		outgoingChanSet  []uint64
+		amount           int64
+		maxRoutingFee    int64
+		maxParts         uint32
+		externalPayments bool
+		err              error
+		expectedTarget   int32
 	}{
+		{
+			name:             "external payer ignores local channels",
+			chain:            chaincfg.MainNetParams,
+			destAddr:         mainnetAddr,
+			label:            "label ok",
+			confTarget:       2,
+			amount:           1_000_000,
+			maxRoutingFee:    100_000,
+			maxParts:         5,
+			externalPayments: true,
+			err:              nil,
+			expectedTarget:   2,
+		},
 		{
 			name:       "mainnet address with mainnet backend",
 			chain:      chaincfg.MainNetParams,
@@ -1429,6 +1490,7 @@ func TestValidateLoopOutRequest(t *testing.T) {
 				OutgoingChanSet:   test.outgoingChanSet,
 				Label:             test.label,
 				SweepConfTarget:   test.confTarget,
+				ExternalPayments:  test.externalPayments,
 			}
 
 			logger := btclog.NewSLogger(
